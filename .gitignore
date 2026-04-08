@@ -1,0 +1,65 @@
+# Root / General
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.swp
+*.swo
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.fleet/
+.zed/
+
+# AI Agent / Tooling
+.temp_ag_kit/
+.gemini/
+.ag_kit_cache/
+.agent/
+
+# Frontend (frontend-app/)
+frontend-app/node_modules/
+frontend-app/dist/
+frontend-app/build/
+frontend-app/.next/
+frontend-app/.eslintcache
+frontend-app/.stylelintcache
+frontend-app/out/
+
+# Backend (backend-app/)
+backend-app/__pycache__/
+backend-app/*.py[cod]
+backend-app/*$py.class
+backend-app/venv/
+backend-app/env/
+backend-app/.venv/
+backend-app/db.sqlite3
+backend-app/db.sqlite3-journal
+backend-app/media/
+backend-app/static/
+
+# ESP32 Firmware (esp32-firmware/)
+esp32-firmware/__pycache__/
+esp32-firmware/*.py[cod]
+esp32-firmware/.python-version
+
+# Documentation
+# walkthrough.md is generally committed, but if temporary:
+# walkthrough.md.backup
