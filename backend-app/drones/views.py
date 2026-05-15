@@ -1,3 +1,8 @@
+import json
+import os
+import paho.mqtt.publish as publish
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db.models import Q
 from django.contrib.auth.models import User
 from rest_framework import viewsets, permissions, status
@@ -55,12 +60,47 @@ class DroneViewSet(viewsets.ModelViewSet):
         drone.save()
         return Response({"status": "Ghép đôi thành công!", "drone": self.get_serializer(drone).data})
 
+    def perform_create(self, serializer):
+        # Tự động gán owner là người dùng đang đăng nhập khi tạo thủ công
+        serializer.save(owner=self.request.user)
+
+    def perform_update(self, serializer):
+        drone = serializer.save()
+        # Thông báo cập nhật qua WebSocket
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "drone_updates",
+                {
+                    "type": "drone_telemetry",
+                    "message": {
+                        "id": drone.device_id,
+                        "name": drone.name,
+                        "state": drone.state,
+                        "is_active": drone.is_active
+                    }
+                }
+            )
+
+    def perform_destroy(self, instance):
+        device_id = instance.device_id
+        instance.delete()
+        # Thông báo Xóa qua WebSocket
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "drone_updates",
+                {
+                    "type": "drone_deleted",
+                    "message": {"id": device_id}
+                }
+            )
+
     @action(detail=False, methods=['post'])
     def command(self, request):
         drone_id = request.data.get('drone_id')
-        command = request.data.get('command')
+        command_type = request.data.get('type')
         
-        # Check ownership
         try:
             drone = Drone.objects.get(device_id=drone_id)
             if not request.user.is_staff and drone.owner != request.user:
@@ -68,19 +108,24 @@ class DroneViewSet(viewsets.ModelViewSet):
         except Drone.DoesNotExist:
             return Response({"error": "Drone not found"}, status=404)
 
-        print(f"📡 [API] RECEIVED COMMAND: {command} for drone {drone_id}")
-        data = request.data.copy()
-        data.pop('drone_id', None)
-        
-        topic = f"drone/command/{drone_id}"
+        topic = f"drone/{drone_id}/command"
         try:
+            import paho.mqtt.publish as publish
+            import json
+            import os
+            
+            payload = json.dumps({
+                "type": command_type,
+                "params": request.data.get('params', {})
+            })
+            
             publish.single(
                 topic,
-                payload=json.dumps(data),
+                payload=payload,
                 hostname=os.getenv("MQTT_HOST", "localhost"),
                 port=1883
             )
-            return Response({"status": "Command sent", "topic": topic, "command": command})
+            return Response({"status": "Command sent", "topic": topic})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 

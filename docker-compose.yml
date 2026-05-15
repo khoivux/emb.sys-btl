@@ -10,27 +10,37 @@ services:
       - ./infrastructure/mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: always
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: always
+
   backend:
     build: ./backend-app
     environment:
       - MQTT_HOST=mqtt_broker
+      - REDIS_HOST=redis
     ports:
       - "8000:8000"
     volumes:
       - ./backend-app:/app
     depends_on:
       - mqtt_broker
+      - redis
     restart: always
 
   mqtt_listener:
     build: ./backend-app
     environment:
       - MQTT_HOST=mqtt_broker
+      - REDIS_HOST=redis
     command: python mqtt_listener.py
     volumes:
       - ./backend-app:/app
     depends_on:
       - mqtt_broker
+      - redis
     restart: always
 
   frontend:

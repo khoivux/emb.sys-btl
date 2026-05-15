@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import MapView from './components/MapView.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
 import AuthPage from './components/AuthPage.jsx';
@@ -14,12 +14,17 @@ import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar }
 function Dashboard() {
   const { drones, discoveredDrones, setDiscoveredDrones, sendCommand, isConnected } = useDroneSocket();
   const { user, logout } = useAuth();
-  const [isAdminPanel, setIsAdminPanel] = useState(false);
-  const [activeTab, setActiveTab] = useState('map'); // 'map', 'drones', 'clusters', 'profile', 'discovery'
+  const [isAdminPanel, setIsAdminPanel] = useState(() => localStorage.getItem('isAdminPanel') === 'true');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'map');
 
-  // Default to Admin Panel if admin
-  React.useEffect(() => {
-    if (user?.isAdmin) {
+  useEffect(() => {
+    localStorage.setItem('activeTab', activeTab);
+    localStorage.setItem('isAdminPanel', isAdminPanel);
+  }, [activeTab, isAdminPanel]);
+
+  // Default to Admin Panel if admin and not set yet
+  useEffect(() => {
+    if (user?.isAdmin && localStorage.getItem('isAdminPanel') === null) {
         setIsAdminPanel(true);
     }
   }, [user]);
@@ -99,7 +104,7 @@ function Dashboard() {
                     </>
                 )}
                 {activeTab === 'discovery' && <DiscoveryTab discoveredDrones={discoveredDrones} setDiscoveredDrones={setDiscoveredDrones} />}
-                {activeTab === 'drones' && <DroneManagement />}
+                {activeTab === 'drones' && <DroneManagement drones={drones} />}
                 {activeTab === 'clusters' && <ClusterManagement />}
                 {activeTab === 'profile' && <ProfilePage />}
 

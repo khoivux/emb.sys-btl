@@ -8,12 +8,11 @@ export const useDroneSocket = () => {
 
   useEffect(() => {
     let reconnectTimeout;
+    const hostname = window.location.hostname;
     
     const connect = () => {
-        // Connect to Django Channels WebSocket
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // Force 127.0.0.1 instead of localhost for Windows compatibility
-        const socketUrl = `${protocol}//127.0.0.1:8000/ws/drones/`;
+        const socketUrl = `${protocol}//${hostname}:8000/ws/drones/`;
         console.log("🔗 Connecting to WebSocket:", socketUrl);
         
         const socket = new WebSocket(socketUrl);
@@ -28,16 +27,29 @@ export const useDroneSocket = () => {
         socket.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
+            console.log("📥 [WS MESSAGE]", data.type, data.data);
+            
             if (data.type === 'telemetry') {
               const droneData = data.data;
+              console.log("🛰️ Telemetry for:", droneData.device_id, "Active:", droneData.is_active);
+              
               setDrones((prev) => ({
                 ...prev,
-                [droneData.id]: droneData,
+                [droneData.device_id || droneData.id]: {
+                    ...prev[droneData.device_id || droneData.id],
+                    ...droneData
+                },
               }));
             } else if (data.type === 'discovery') {
               setDiscoveredDrones(prev => {
                   if (prev.find(d => d.device_id === data.data.device_id)) return prev;
                   return [...prev, data.data];
+              });
+            } else if (data.type === 'drone_deleted') {
+              setDrones(prev => {
+                  const newDrones = { ...prev };
+                  delete newDrones[data.message.id];
+                  return newDrones;
               });
             }
           } catch (err) {
@@ -45,12 +57,7 @@ export const useDroneSocket = () => {
           }
         };
 
-        socket.onerror = (err) => {
-          console.error("❌ [WS] WebSocket Error - Backend might be down.");
-        };
-
         socket.onclose = (e) => {
-          console.log(`ℹ️ [WS] Connection closed (code: ${e.code}). Retrying in 3s...`);
           setIsConnected(false);
           reconnectTimeout = setTimeout(connect, 3000);
         };
@@ -61,7 +68,7 @@ export const useDroneSocket = () => {
     return () => {
       clearTimeout(reconnectTimeout);
       if (socketRef.current) {
-        socketRef.current.onclose = null; // Prevent reconnect on unmount
+        socketRef.current.onclose = null;
         socketRef.current.close();
       }
     };
@@ -69,9 +76,9 @@ export const useDroneSocket = () => {
 
   const sendCommand = (droneId, command, params = {}) => {
     const token = localStorage.getItem('token');
-    console.log(`📡 Sending Command: ${command} to ${droneId}`, params);
+    const hostname = window.location.hostname;
     
-    fetch("http://127.0.0.1:8000/api/drones/command/", {
+    fetch(`http://${hostname}:8000/api/drones/command/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -79,21 +86,12 @@ export const useDroneSocket = () => {
       },
       body: JSON.stringify({
         drone_id: droneId,
-        command: command,
-        ...params,
+        type: command, // Backend uses 'type' for command name
+        params: params,
       }),
     })
-    .then(res => {
-        if (res.status === 401) {
-            localStorage.removeItem('token');
-            window.location.reload();
-        }
-        return res.json();
-    })
-    .then(data => console.log("✅ Command Response:", data))
-    .catch(err => {
-        console.error("❌ Command Failed:", err);
-    });
+    .then(res => res.json())
+    .catch(err => console.error("❌ Command Failed:", err));
   };
 
   return { drones, discoveredDrones, setDiscoveredDrones, sendCommand, isConnected };

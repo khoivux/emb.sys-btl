@@ -36,6 +36,12 @@ class MQTTClient:
     def set_callback(self, f):
         self.cb = f
 
+    def set_last_will(self, topic, msg, retain=False, qos=0):
+        self.lw_topic = topic
+        self.lw_msg = msg
+        self.lw_qos = qos
+        self.lw_retain = retain
+
     def connect(self, clean_session=True):
         self.sock = socket.socket()
         addr = socket.getaddrinfo(self.server, self.port)[0][-1]
@@ -45,18 +51,40 @@ class MQTTClient:
             self.sock = ussl.wrap_socket(self.sock, **self.ssl_params)
         
         msg = bytearray(b"\x00\x04MQTT\x04\x02\x00\x00")
-        sz = 12 + len(self.client_id)
+        sz = 10 + 2 + len(self.client_id)
         msg[7] = 0x02 if clean_session else 0
-        if self.keepalive:
-            msg[8] |= self.keepalive >> 8
-            msg[9] |= self.keepalive & 0x00FF
         
+        if self.lw_topic:
+            sz += 2 + len(self.lw_topic) + 2 + len(self.lw_msg)
+            msg[7] |= 0x04 | (self.lw_qos & 0x01) << 3 | (self.lw_qos & 0x02) << 3
+            if self.lw_retain:
+                msg[7] |= 0x20
+                
+        if self.user is not None:
+            sz += 2 + len(self.user) + 2 + len(self.pswd)
+            msg[7] |= 0xC0
+            
+        if self.keepalive:
+            msg[8] = self.keepalive >> 8
+            msg[9] = self.keepalive & 0x00FF
+                
         self.sock.write(b"\x10")
-        # Handle length for CONNECT (usually < 127)
-        self.sock.write(struct.pack("B", sz))
+        # Handle length encoding for packets potentially > 127
+        if sz > 127:
+            self.sock.write(struct.pack("B", (sz & 0x7f) | 0x80))
+            self.sock.write(struct.pack("B", sz >> 7))
+        else:
+            self.sock.write(struct.pack("B", sz))
+            
         self.sock.write(msg)
         self._send_str(self.client_id)
-        
+        if self.lw_topic:
+            self._send_str(self.lw_topic)
+            self._send_str(self.lw_msg)
+        if self.user is not None:
+            self._send_str(self.user)
+            self._send_str(self.pswd)
+            
         res = self.sock.read(4)
         return res[2] & 1
 

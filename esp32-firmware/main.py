@@ -72,13 +72,17 @@ def on_message(topic, msg):
 # --- 5. CHƯƠNG TRÌNH CHÍNH ---
 def main():
     connect_wifi()
-    client = MQTTClient(CLIENT_ID, MQTT_SERVER, keepalive=60)
+    client = MQTTClient(CLIENT_ID, MQTT_SERVER, keepalive=10)
     client.set_callback(on_message)
     
+    # Thiết lập "Di chúc": Nếu mất kết nối đột ngột, Server sẽ nhận được tin nhắn OFFLINE
+    lwt_data = json.dumps({"device_id": CLIENT_ID, "state": "OFFLINE"})
+    client.set_last_will(TOPIC_TELEMETRY, lwt_data, retain=True)
+    
     try:
-        client.connect()
-        client.subscribe(TOPIC_COMMAND)
-        print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
+        if client.connect():
+            print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
+            client.subscribe(TOPIC_COMMAND)
     except Exception as e:
         print("❌ Lỗi MQTT:", e)
         time.sleep(5)

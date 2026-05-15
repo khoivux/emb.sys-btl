@@ -1,40 +1,48 @@
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/AuthContext';
-import { Signal, Shield, Plus, Loader2, Cpu, Zap } from 'lucide-react';
+import { Signal, Shield, Plus, Loader2, Cpu, Zap, X } from 'lucide-react';
 
 const DiscoveryTab = ({ discoveredDrones, setDiscoveredDrones }) => {
     const { token } = useAuth();
-    const [claimingId, setClaimingId] = useState(null);
+    const [claimingDrone, setClaimingDrone] = useState(null);
+    const [droneName, setDroneName] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleClaim = async (id, deviceId) => {
-        setClaimingId(id);
-        const name = prompt("Đặt tên cho Drone này:", `Drone ${deviceId.slice(0, 4)}`);
-        if (!name) {
-            setClaimingId(null);
-            return;
+    const handleClaim = async (e) => {
+        e.preventDefault();
+        if (!claimingDrone || !droneName) return;
+        
+        setLoading(true);
+        const baseUrl = `http://${window.location.hostname}:8000`;
+        
+        try {
+            const res = await fetch(`${baseUrl}/api/drones/${claimingDrone.id}/claim/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ name: droneName })
+            });
+
+            if (res.ok) {
+                setDiscoveredDrones(prev => prev.filter(d => d.id !== claimingDrone.id));
+                setClaimingDrone(null);
+                setDroneName('');
+                // Note: The parent component should probably refresh the myDrones list
+                window.dispatchEvent(new CustomEvent('drone_claimed'));
+            } else {
+                alert("Có lỗi xảy ra khi kết nối.");
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
         }
-
-        const res = await fetch(`http://127.0.0.1:8000/api/drones/${id}/claim/`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ name })
-        });
-
-        if (res.ok) {
-            // Remove from discovered list locally
-            setDiscoveredDrones(prev => prev.filter(d => d.id !== id));
-            alert("Kết nối thành công!");
-        } else {
-            alert("Có lỗi xảy ra khi kết nối.");
-        }
-        setClaimingId(null);
     };
 
     return (
-        <div className="flex-1 bg-slate-950 p-8 flex flex-col items-center overflow-y-auto custom-scrollbar">
+        <div className="flex-1 bg-slate-950 p-8 flex flex-col items-center overflow-y-auto custom-scrollbar relative">
             {/* Header Section */}
             <div className="w-full max-w-4xl mb-12 text-center">
                 <h1 className="text-4xl font-black text-white tracking-tighter mb-4">
@@ -53,17 +61,14 @@ const DiscoveryTab = ({ discoveredDrones, setDiscoveredDrones }) => {
                 <div className="absolute inset-4 border border-blue-500/10 rounded-full"></div>
                 <div className="absolute inset-16 border border-blue-500/5 rounded-full"></div>
                 
-                {/* Rotating Sweep */}
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-transparent w-1/2 h-full origin-right animate-[spin_4s_linear_infinite] rounded-l-full blur-sm"></div>
                 
-                {/* Center Core */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
                     <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-2xl shadow-blue-600/50">
                         <Signal className="text-white animate-pulse" size={24} />
                     </div>
                 </div>
 
-                {/* Discovered Dots */}
                 {discoveredDrones.map((drone, i) => (
                     <div 
                         key={drone.id}
@@ -103,17 +108,54 @@ const DiscoveryTab = ({ discoveredDrones, setDiscoveredDrones }) => {
                             </div>
 
                             <button 
-                                onClick={() => handleClaim(drone.id, drone.device_id)}
-                                disabled={claimingId === drone.id}
-                                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white py-4 rounded-3xl font-bold transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-3"
+                                onClick={() => {
+                                    setClaimingDrone(drone);
+                                    setDroneName(`Drone ${drone.device_id.slice(0, 4)}`);
+                                }}
+                                className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-3xl font-bold transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-3"
                             >
-                                {claimingId === drone.id ? <Loader2 className="animate-spin" size={20} /> : <Plus size={20} />}
+                                <Plus size={20} />
                                 GHÉP ĐÔI THIẾT BỊ
                             </button>
                         </div>
                     ))
                 )}
             </div>
+
+            {/* Claim Modal */}
+            {claimingDrone && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-slate-900 border border-white/10 p-8 rounded-[40px] w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-black text-white">NHẬN THIẾT BỊ</h2>
+                            <button onClick={() => setClaimingDrone(null)} className="text-slate-500 hover:text-white">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <p className="text-slate-400 text-sm mb-6">ID: <span className="text-blue-400 font-mono">{claimingDrone.device_id}</span></p>
+                        
+                        <form onSubmit={handleClaim}>
+                            <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Tên thiết bị mới</label>
+                            <input 
+                                autoFocus
+                                value={droneName}
+                                onChange={(e) => setDroneName(e.target.value)}
+                                className="w-full bg-slate-950 border border-white/5 rounded-2xl p-4 text-white mb-8 focus:border-blue-500 outline-none transition-all"
+                                placeholder="Nhập tên Drone..."
+                            />
+                            
+                            <button 
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 transition-all"
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={20} /> : <Shield size={20} />}
+                                XÁC NHẬN KẾT NỐI
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

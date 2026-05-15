@@ -1,30 +1,57 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/AuthContext';
-import { Plus, Trash2, Cpu, Battery, Signal, Navigation } from 'lucide-react';
+import { Plus, Trash2, Cpu, Battery, Signal, Navigation, Loader2, Edit2, X, ShieldCheck } from 'lucide-react';
 
-const DroneManagement = () => {
+const DroneManagement = (props) => {
     const { token } = useAuth();
     const [drones, setDrones] = useState([]);
-    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-    const [newDrone, setNewDrone] = useState({ device_id: '', name: '' });
-
     const [unclaimedDrones, setUnclaimedDrones] = useState([]);
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [editingDrone, setEditingDrone] = useState(null);
+    const [newDrone, setNewDrone] = useState({ device_id: '', name: '' });
+    const [loading, setLoading] = useState(false);
+
+    const baseUrl = `http://${window.location.hostname}:8000`;
 
     const fetchData = async () => {
-        const [res, discRes] = await Promise.all([
-            fetch('http://127.0.0.1:8000/api/drones/', { headers: { 'Authorization': `Bearer ${token}` } }),
-            fetch('http://127.0.0.1:8000/api/drones/discovery/', { headers: { 'Authorization': `Bearer ${token}` } })
-        ]);
-        if (res.ok) setDrones(await res.json());
-        if (discRes.ok) setUnclaimedDrones(await discRes.json());
+        try {
+            const [res, discRes] = await Promise.all([
+                fetch(`${baseUrl}/api/drones/`, { headers: { 'Authorization': `Bearer ${token}` } }),
+                fetch(`${baseUrl}/api/drones/discovery/`, { headers: { 'Authorization': `Bearer ${token}` } })
+            ]);
+            if (res.ok) setDrones(await res.json());
+            if (discRes.ok) setUnclaimedDrones(await discRes.json());
+        } catch (err) {
+            console.error("Lỗi tải dữ liệu:", err);
+        }
     };
+
+    // Sync live updates into the local list
+    useEffect(() => {
+        if (props.drones && Object.keys(props.drones).length > 0) {
+            setDrones(currentDrones => 
+                currentDrones.map(d => {
+                    const live = props.drones[d.device_id];
+                    if (live) {
+                        return { ...d, ...live };
+                    }
+                    return d;
+                })
+            );
+        }
+    }, [props.drones]);
 
     useEffect(() => {
         fetchData();
+        // Lắng nghe sự kiện từ tab Discovery nếu có
+        const handleRefresh = () => fetchData();
+        window.addEventListener('drone_claimed', handleRefresh);
+        return () => window.removeEventListener('drone_claimed', handleRefresh);
     }, [token]);
 
     const handleClaim = async (id, name) => {
-        const res = await fetch(`http://127.0.0.1:8000/api/drones/${id}/claim/`, {
+        setLoading(true);
+        const res = await fetch(`${baseUrl}/api/drones/${id}/claim/`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -32,74 +59,116 @@ const DroneManagement = () => {
             },
             body: JSON.stringify({ name })
         });
-        if (res.ok) fetchData();
+        if (res.ok) {
+            // Cập nhật State cục bộ ngay lập tức
+            const claimed = unclaimedDrones.find(d => d.id === id);
+            setUnclaimedDrones(prev => prev.filter(d => d.id !== id));
+            if (claimed) {
+                setDrones(prev => [...prev, { ...claimed, name, owner: true, is_active: true }]);
+            }
+        }
+        setLoading(false);
     };
 
-    const handleAddDrone = async (e) => {
+    const handleUpdateDrone = async (e) => {
         e.preventDefault();
-        const res = await fetch('http://127.0.0.1:8000/api/drones/', {
-            method: 'POST',
+        setLoading(true);
+        const res = await fetch(`${baseUrl}/api/drones/${editingDrone.id}/`, {
+            method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify(newDrone)
+            body: JSON.stringify({ name: editingDrone.name })
         });
         if (res.ok) {
-            fetchDrones();
-            setIsAddModalOpen(false);
-            setNewDrone({ device_id: '', name: '' });
+            const updated = await res.json();
+            setDrones(prev => prev.map(d => d.id === updated.id ? updated : d));
+            setEditingDrone(null);
         }
+        setLoading(false);
     };
 
     const handleDelete = async (id) => {
         if (!window.confirm("Bạn có chắc chắn muốn xóa Drone này?")) return;
-        const res = await fetch(`http://127.0.0.1:8000/api/drones/${id}/`, {
+        const res = await fetch(`${baseUrl}/api/drones/${id}/`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (res.ok) fetchDrones();
+        if (res.ok) {
+            setDrones(prev => prev.filter(d => d.id !== id));
+        }
+    };
+
+    const handleAddDrone = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            const res = await fetch(`${baseUrl}/api/drones/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify(newDrone)
+            });
+            if (res.ok) {
+                const created = await res.json();
+                setDrones(prev => [...prev, created]);
+                setIsAddModalOpen(false);
+                setNewDrone({ device_id: '', name: '' });
+            } else {
+                const errData = await res.json();
+                alert("Lỗi: " + (errData.detail || JSON.stringify(errData)));
+            }
+        } catch (err) {
+            alert("Lỗi kết nối server");
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
-        <div className="flex-1 bg-slate-950 p-8 overflow-y-auto">
+        <div className="flex-1 bg-slate-950 p-8 overflow-y-auto custom-scrollbar">
             <div className="flex justify-between items-center mb-10">
                 <div>
-                    <h1 className="text-3xl font-black text-white">MY <span className="text-blue-500">DRONES</span></h1>
-                    <p className="text-slate-500 text-sm">Quản lý và thiết lập thông tin thiết bị</p>
+                    <h1 className="text-3xl font-black text-white uppercase tracking-tighter">My <span className="text-blue-500">Drones</span></h1>
+                    <p className="text-slate-500 text-sm font-medium">Hệ thống quản lý hạm đội thiết bị bay</p>
                 </div>
                 <button 
                     onClick={() => setIsAddModalOpen(true)}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl transition-all shadow-lg shadow-blue-600/20"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-2xl transition-all shadow-lg shadow-blue-600/20 font-bold"
                 >
-                    <Plus size={20} /> Thêm Drone Thủ Công
+                    <Plus size={20} /> THÊM THỦ CÔNG
                 </button>
             </div>
 
             {/* DISCOVERY SECTION */}
             {unclaimedDrones.length > 0 && (
-                <div className="mb-12">
+                <div className="mb-12 animate-in slide-in-from-top duration-500">
                     <div className="flex items-center gap-3 mb-6">
                         <div className="h-2 w-2 bg-blue-500 rounded-full animate-ping"></div>
-                        <h2 className="text-sm font-bold text-blue-400 uppercase tracking-widest">Phát hiện thiết bị mới ở gần</h2>
+                        <h2 className="text-sm font-black text-blue-400 uppercase tracking-widest">Phát hiện thiết bị mới ở gần</h2>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {unclaimedDrones.map(drone => (
-                            <div key={drone.id} className="bg-blue-600/5 border border-blue-500/20 rounded-3xl p-6 flex flex-col justify-between">
+                            <div key={drone.id} className="bg-blue-600/5 border border-blue-500/20 rounded-[32px] p-6 flex flex-col justify-between hover:bg-blue-600/10 transition-colors">
                                 <div className="flex items-center gap-4 mb-4">
-                                    <div className="w-10 h-10 bg-blue-600/20 text-blue-400 rounded-xl flex items-center justify-center">
-                                        <Signal size={20} />
+                                    <div className="w-12 h-12 bg-blue-600/20 text-blue-400 rounded-2xl flex items-center justify-center">
+                                        <Signal size={24} />
                                     </div>
                                     <div>
-                                        <p className="text-xs text-blue-300 font-mono">{drone.device_id}</p>
-                                        <p className="text-white text-[10px] uppercase font-bold">Chưa kết nối</p>
+                                        <p className="text-[10px] text-blue-400 font-black uppercase mb-1">Chưa ghép đôi</p>
+                                        <p className="text-white text-xs font-mono">{drone.device_id}</p>
                                     </div>
                                 </div>
                                 <button 
                                     onClick={() => handleClaim(drone.id, `Drone ${drone.device_id.slice(0,4)}`)}
-                                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl text-xs font-bold transition-all"
+                                    disabled={loading}
+                                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2"
                                 >
-                                    Ghép đôi ngay
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                    GHÉP ĐÔI NGAY
                                 </button>
                             </div>
                         ))}
@@ -108,88 +177,150 @@ const DroneManagement = () => {
                 </div>
             )}
 
+            {/* MAIN LIST */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {drones.filter(d => d.owner !== null).map(drone => (
-                    <div key={drone.id} className="bg-slate-900/50 border border-white/5 rounded-3xl p-6 hover:border-blue-500/30 transition-all group relative overflow-hidden">
-                        <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleDelete(drone.id)} className="text-slate-600 hover:text-red-500 p-2">
-                                <Trash2 size={18} />
-                            </button>
-                        </div>
+                {drones.length === 0 && !loading && (
+                    <div className="col-span-full py-20 bg-slate-900/20 border-2 border-dashed border-white/5 rounded-[40px] flex flex-col items-center justify-center text-center">
+                        <Cpu className="text-slate-800 mb-4" size={60} />
+                        <h3 className="text-slate-500 font-bold uppercase tracking-widest">Chưa có drone nào</h3>
+                        <p className="text-slate-700 text-sm mt-2">Hãy bật thiết bị và vào tab Radar để tìm kiếm</p>
+                    </div>
+                )}
+                
+                {drones.map(drone => {
+                    const liveData = (props.drones && props.drones[drone.device_id]) || {};
+                    const isActive = liveData.is_active !== undefined ? liveData.is_active : drone.is_active;
+                    const battery = liveData.battery !== undefined ? liveData.battery : (drone.battery || 0);
 
-                        <div className="flex items-start gap-4 mb-6">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${drone.is_active ? 'bg-green-500/10 text-green-500' : 'bg-slate-800 text-slate-500'}`}>
-                                <Cpu size={24} />
-                            </div>
-                            <div>
-                                <h3 className="text-white font-bold text-lg">{drone.name}</h3>
-                                <p className="text-slate-500 text-xs font-mono">{drone.device_id}</p>
-                            </div>
-                        </div>
+                    if (liveData.device_id) {
+                        console.log(`🔌 [UI MERGE] Drone ${drone.device_id}: Active=${isActive}, Battery=${battery}`);
+                    }
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="bg-slate-800/30 p-3 rounded-xl border border-white/5">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Trạng thái</p>
-                                <div className="flex items-center gap-2">
-                                    <div className={`h-2 w-2 rounded-full ${drone.is_active ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`}></div>
-                                    <span className={`text-xs font-bold ${drone.is_active ? 'text-green-500' : 'text-slate-500'}`}>
-                                        {drone.is_active ? 'ONLINE' : 'OFFLINE'}
-                                    </span>
+                    return (
+                        <div key={drone.id} className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-[40px] p-8 hover:border-blue-500/30 transition-all group relative overflow-hidden">
+                            <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                    onClick={() => setEditingDrone(drone)}
+                                    className="bg-slate-800 hover:bg-blue-600 text-white p-2.5 rounded-xl transition-all"
+                                >
+                                    <Edit2 size={16} />
+                                </button>
+                                <button 
+                                    onClick={() => handleDelete(drone.id)} 
+                                    className="bg-slate-800 hover:bg-red-600 text-white p-2.5 rounded-xl transition-all"
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                            </div>
+
+                            <div className="flex items-start gap-4 mb-8">
+                                <div className={`w-14 h-14 rounded-3xl flex items-center justify-center shadow-2xl ${isActive ? 'bg-green-600 shadow-green-500/20 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                                    <Cpu size={28} />
+                                </div>
+                                <div>
+                                    <h3 className="text-white font-black text-xl tracking-tight">{drone.name}</h3>
+                                    <p className="text-slate-500 text-xs font-mono">{drone.device_id}</p>
                                 </div>
                             </div>
-                            <div className="bg-slate-800/30 p-3 rounded-xl border border-white/5">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Cập nhật lần cuối</p>
-                                <span className="text-xs text-slate-300">
-                                    {new Date(drone.last_seen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-950/50 p-4 rounded-3xl border border-white/5">
+                                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-2">Trạng thái</p>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`h-2 w-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`}></div>
+                                        <span className={`text-xs font-black ${isActive ? 'text-green-500' : 'text-slate-500'}`}>
+                                            {isActive ? 'ONLINE' : 'OFFLINE'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-950/50 p-4 rounded-3xl border border-white/5">
+                                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-2">Pin</p>
+                                    <div className="flex items-center gap-2">
+                                        <Battery size={14} className={battery < 20 ? 'text-red-500' : 'text-blue-500'} />
+                                        <span className="text-xs font-black text-white">{battery}%</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
 
+            {/* EDIT MODAL */}
+            {editingDrone && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+                    <div className="bg-slate-900 border border-white/10 p-10 rounded-[50px] w-full max-w-md shadow-2xl">
+                        <div className="flex justify-between items-center mb-8">
+                            <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Sửa thông tin</h2>
+                            <button onClick={() => setEditingDrone(null)} className="text-slate-500 hover:text-white">
+                                <X size={28} />
+                            </button>
+                        </div>
+                        
+                        <form onSubmit={handleUpdateDrone}>
+                            <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Tên gợi nhớ của Drone</label>
+                            <input 
+                                autoFocus
+                                value={editingDrone.name}
+                                onChange={(e) => setEditingDrone({...editingDrone, name: e.target.value})}
+                                className="w-full bg-slate-950 border border-white/5 rounded-3xl p-5 text-white mb-10 focus:border-blue-500 outline-none transition-all text-lg font-bold"
+                            />
+                            
+                            <button 
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-[24px] text-white font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl shadow-blue-600/30"
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={24} /> : <ShieldCheck size={24} />}
+                                LƯU THAY ĐỔI
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+            {/* ADD MODAL */}
             {isAddModalOpen && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-slate-900 border border-white/10 w-full max-w-md rounded-3xl p-8 shadow-2xl">
-                        <h2 className="text-2xl font-black text-white mb-6">ĐĂNG KÝ <span className="text-blue-500">DRONE MỚI</span></h2>
-                        <form onSubmit={handleAddDrone} className="space-y-6">
-                            <div>
-                                <label className="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Tên Drone</label>
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+                    <div className="bg-slate-900 border border-white/10 p-10 rounded-[50px] w-full max-w-md shadow-2xl">
+                        <div className="flex justify-between items-center mb-8">
+                            <h2 className="text-2xl font-black text-white uppercase tracking-tighter">ĐĂNG KÝ <span className="text-blue-500">MỚI</span></h2>
+                            <button onClick={() => setIsAddModalOpen(false)} className="text-slate-500 hover:text-white">
+                                <X size={28} />
+                            </button>
+                        </div>
+                        
+                        <form onSubmit={handleAddDrone}>
+                            <div className="mb-6">
+                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Tên gợi nhớ</label>
                                 <input 
-                                    type="text" 
-                                    className="w-full bg-slate-950 border border-white/5 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-                                    placeholder="Ví dụ: Drone Thám Hiểm 01"
+                                    autoFocus
                                     value={newDrone.name}
-                                    onChange={e => setNewDrone({...newDrone, name: e.target.value})}
+                                    onChange={(e) => setNewDrone({...newDrone, name: e.target.value})}
+                                    className="w-full bg-slate-950 border border-white/5 rounded-3xl p-5 text-white focus:border-blue-500 outline-none transition-all font-bold"
+                                    placeholder="Ví dụ: Drone Thám Hiểm 01"
                                     required
                                 />
                             </div>
-                            <div>
-                                <label className="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Mã Thiết Bị (Device ID)</label>
+
+                            <div className="mb-10">
+                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Mã Thiết Bị (Device ID)</label>
                                 <input 
-                                    type="text" 
-                                    className="w-full bg-slate-950 border border-white/5 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500"
-                                    placeholder="Ví dụ: drone_001"
                                     value={newDrone.device_id}
-                                    onChange={e => setNewDrone({...newDrone, device_id: e.target.value})}
+                                    onChange={(e) => setNewDrone({...newDrone, device_id: e.target.value})}
+                                    className="w-full bg-slate-950 border border-white/5 rounded-3xl p-5 text-white focus:border-blue-500 outline-none transition-all font-mono"
+                                    placeholder="Ví dụ: drone_99"
                                     required
                                 />
                             </div>
-                            <div className="flex gap-4 pt-4">
-                                <button 
-                                    type="button"
-                                    onClick={() => setIsAddModalOpen(false)}
-                                    className="flex-1 bg-slate-800 text-slate-400 py-3 rounded-xl hover:bg-slate-700 transition-colors"
-                                >
-                                    Hủy
-                                </button>
-                                <button 
-                                    type="submit"
-                                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-500 transition-colors font-bold"
-                                >
-                                    Đăng ký ngay
-                                </button>
-                            </div>
+                            
+                            <button 
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-[24px] text-white font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl shadow-blue-600/30"
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={24} /> : <Plus size={24} />}
+                                ĐĂNG KÝ NGAY
+                            </button>
                         </form>
                     </div>
                 </div>
