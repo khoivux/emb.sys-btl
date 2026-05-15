@@ -1,143 +1,134 @@
-from umqttsimple import MQTTClient
+import network
 import time
-import ujson as json
+import ubinascii
 import machine
+import ujson as json
 import math
+from mqtt import MQTTClient
 
-# --- CONFIGURATION ---
-MQTT_SERVER = "192.168.1.100" # Change to your Broker IP
-CLIENT_ID = "esp32_drone_01"
+# --- 1. CẤU HÌNH HỆ THỐNG ---
+WIFI_SSID = "QuocKhanh"
+WIFI_PASS = "12345678910"
+MQTT_SERVER = "192.168.20.47" 
+
+# Tự động lấy ID duy nhất của chip ESP32 (MAC Address)
+raw_id = machine.unique_id()
+CLIENT_ID = ubinascii.hexlify(raw_id).decode() 
+
 TOPIC_TELEMETRY = b"drone/telemetry"
-TOPIC_COMMAND = b"drone/command"
+TOPIC_COMMAND = b"drone/" + CLIENT_ID.encode() + b"/command"
 
-# --- DRONE STATE ---
-state = "IDLE" # IDLE, TAKEOFF, FLYING, LANDING, RTH, EMERGENCY
-lat = 20.980812  # PTIT Hanoi
-lng = 105.795931
-alt = 0.0
-speed = 0.0
-battery = 100.0
-target_lat = lat
-target_lng = lng
-home_lat = lat
-home_lng = lng
+# --- 2. TRẠNG THÁI DRONE ---
+state = "IDLE"
+lat, lng, alt = 20.980812, 105.795931, 0.0
+target_lat, target_lng = lat, lng
+battery = 95.0
 
-# --- CONSTANTS ---
-DEG_TO_METERS = 111139.0 # Roughly 1 degree lat = 111km
-MAX_ALTITUDE = 50.0
-CLIMB_RATE = 0.5  # m/loop
-FLY_SPEED = 0.00005 # ~5-10m per tick in degrees approx
+# --- 3. KẾT NỐI WIFI ---
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print('Đang nối WiFi:', WIFI_SSID)
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+        timeout = 20
+        start = time.time()
+        while not wlan.isconnected() and (time.time() - start) < timeout:
+            print(".", end="")
+            time.sleep(1)
+    if wlan.isconnected():
+        print('\nWiFi OK! IP:', wlan.ifconfig()[0])
+    else:
+        print('\nWiFi lỗi! Đang khởi động lại...')
+        machine.reset()
 
-def map_angle(x1, y1, x2, y2):
-    return math.atan2(y2 - y1, x2 - x1)
-
+# --- 4. XỬ LÝ LỆNH TỪ WEB ---
 def on_message(topic, msg):
     global state, target_lat, target_lng
     try:
         data = json.loads(msg)
-        command = data.get("command")
-        print("Received command:", command)
+        # Sửa: Backend gửi key "type" thay vì "command"
+        cmd = data.get("type") 
+        params = data.get("params", {}) # Lấy các tham số đi kèm (như tọa độ GOTO)
         
-        if command == "TAKEOFF" and state == "IDLE":
+        print("Lệnh mới nhận được:", cmd)
+        
+        if cmd == "TAKEOFF": 
             state = "TAKEOFF"
-        elif command == "LAND":
+        elif cmd == "LAND": 
             state = "LANDING"
-        elif command == "RTH":
-            state = "RTH"
-            target_lat, target_lng = home_lat, home_lng
-        elif command == "GOTO":
-            target_lat = data.get("lat", lat)
-            target_lng = data.get("lng", lng)
-            state = "FLYING"
-        elif command == "EMERGENCY":
-            state = "EMERGENCY"
-    except Exception as e:
-        print("Error parsing command:", e)
-
-def connect_mqtt():
-    client = MQTTClient(CLIENT_ID, MQTT_SERVER)
-    client.set_callback(on_message)
-    client.connect()
-    client.subscribe(TOPIC_COMMAND)
-    print("Connected to MQTT Broker:", MQTT_SERVER)
-    return client
-
-def update_physics():
-    global lat, lng, alt, state, battery, target_lat, target_lng
-    
-    if state == "IDLE":
-        speed = 0
-    elif state == "TAKEOFF":
-        if alt < MAX_ALTITUDE:
-            alt += CLIMB_RATE
-        else:
-            state = "FLYING"
-    elif state == "FLYING" or state == "RTH":
-        dist_lat = target_lat - lat
-        dist_lng = target_lng - lng
-        dist = math.sqrt(dist_lat**2 + dist_lng**2)
-        
-        if dist > 0.00001:
-            lat += (dist_lat / dist) * FLY_SPEED
-            lng += (dist_lng / dist) * FLY_SPEED
-        else:
-            if state == "RTH":
-                state = "LANDING"
-            else:
-                state = "FLYING" # Stay at target
-    elif state == "LANDING":
-        if alt > 0:
-            alt -= CLIMB_RATE
-        else:
-            alt = 0
+        elif cmd == "GOTO":
+            state = "MOVING"
+            # Sửa: Lấy tọa độ từ trong object params
+            target_lat = params.get("lat", lat)
+            target_lng = params.get("lng", lng)
+            print(f"🚩 Đang bay tới: {target_lat}, {target_lng}")
+        elif cmd == "EMERGENCY": 
             state = "IDLE"
-    elif state == "EMERGENCY":
-        alt = 0 # Simulate crash/stop
-        
-    # Drain battery
-    if state != "IDLE":
-        battery -= 0.05
-    if battery < 10 and state != "RTH" and state != "LANDING":
-        print("Low Battery! Emergency RTH")
-        state = "RTH"
-        target_lat, target_lng = home_lat, home_lng
+            machine.reset()
+    except Exception as e: 
+        print("Lỗi giải mã lệnh:", e)
 
+# --- 5. CHƯƠNG TRÌNH CHÍNH ---
 def main():
+    connect_wifi()
+    client = MQTTClient(CLIENT_ID, MQTT_SERVER, keepalive=60)
+    client.set_callback(on_message)
+    
     try:
-        client = connect_mqtt()
+        client.connect()
+        client.subscribe(TOPIC_COMMAND)
+        print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
     except Exception as e:
-        print("MQTT Connection Failed. Retrying in 5s...")
+        print("❌ Lỗi MQTT:", e)
         time.sleep(5)
         machine.reset()
 
-    last_telemetry = 0
-    
+    last_send = 0
     while True:
         try:
-            client.check_msg() # Non-blocking check
+            client.check_msg()
             
-            update_physics()
+            # --- LOGIC GIẢ LẬP VẬT LÝ ---
+            global alt, lat, lng, state
             
-            # Publish telemetry every 1 second
-            if time.time() - last_telemetry >= 1:
+            # 1. Xử lý Độ cao
+            if state == "TAKEOFF" and alt < 10: 
+                alt += 0.2
+            elif state == "LANDING" and alt > 0: 
+                alt -= 0.2
+                if alt <= 0: state = "IDLE"
+
+            # 2. Xử lý Di chuyển
+            if state == "MOVING" and alt > 2:
+                step = 0.0001
+                if abs(lat - target_lat) > step:
+                    lat += step if target_lat > lat else -step
+                if abs(lng - target_lng) > step:
+                    lng += step if target_lng > lng else -step
+                
+                if abs(lat - target_lat) < step and abs(lng - target_lng) < step:
+                    print("🎯 Đã tới đích!")
+                    state = "HOVER"
+
+            # 3. Gửi dữ liệu Telemetry (Sửa lại tên các field cho khớp với Backend)
+            if (time.time() - last_send) > 2:
                 telemetry = {
-                    "id": CLIENT_ID,
+                    "device_id": CLIENT_ID,
                     "state": state,
-                    "lat": lat,
-                    "lng": lng,
-                    "alt": alt,
-                    "battery": max(0, round(battery, 1)),
-                    "timestamp": time.time()
+                    "latitude": lat, 
+                    "longitude": lng, 
+                    "altitude": round(alt, 2),
+                    "battery": battery, 
                 }
                 client.publish(TOPIC_TELEMETRY, json.dumps(telemetry))
-                last_telemetry = time.time()
-                print("Status:", state, "| Pos:", lat, lng, "| Alt:", alt)
+                print(f"📡 [{state}] Lat: {lat:.5f}, Lng: {lng:.5f}, Alt: {alt:.1f}m")
+                last_send = time.time()
                 
             time.sleep(0.1)
         except Exception as e:
-            print("Error in loop:", e)
+            print("Lỗi vòng lặp:", e)
             time.sleep(2)
-            machine.reset()
 
 if __name__ == "__main__":
     main()

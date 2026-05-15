@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  mqtt_broker:
+    image: eclipse-mosquitto:latest
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./infrastructure/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: always
+
+  backend:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-app:/app
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mqtt_listener:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python mqtt_listener.py
+    volumes:
+      - ./backend-app:/app
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  frontend:
+    build: ./frontend-app
+    ports:
+      - "5173:3000"
+    volumes:
+      - ./frontend-app:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: always

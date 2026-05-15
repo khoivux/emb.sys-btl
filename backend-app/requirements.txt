@@ -5,3 +5,4 @@ djangorestframework
 django-cors-headers
 paho-mqtt
 asgiref
+djangorestframework-simplejwt

@@ -15,12 +15,14 @@ TOPIC_COMMAND = "drone/command"
 # --- AUTO-GEOLOCATION ---
 def get_current_location():
     try:
-        with urllib.request.urlopen("https://ipapi.co/json/") as response:
+        # Reduced timeout and added a header to avoid some 429 issues
+        req = urllib.request.Request("https://ipapi.co/json/", headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
-            print(f"[SIMULATOR] Đã dò thấy vị trí thực tế của bạn: {data.get('city')}, {data.get('country')}")
+            print(f"[SIMULATOR] detected location: {data.get('city')}, {data.get('country')}")
             return float(data.get('latitude')), float(data.get('longitude'))
     except Exception as e:
-        print(f"[SIMULATOR] Không dò được vị trí thực tế ({e}). Mặc định: PTIT Hà Nội.")
+        print(f"[SIMULATOR] Could not detect location ({e}). Defaulting to PTIT Hanoi.")
         return 20.980812, 105.795931
 
 # --- INITIAL DRONE STATE ---
@@ -55,7 +57,7 @@ def on_message(client, userdata, msg):
         if command == "TAKEOFF" and state == "IDLE":
             state = "TAKEOFF"
             target_alt = 1.5 # Safety takeoff altitude (1.5m)
-            print("[SIMULATOR] Thực hiện quy trình Cất cánh an toàn (Safety Takeoff)...")
+            print("[SIMULATOR] Performing Safety Takeoff...")
         elif command == "LAND":
             state = "LANDING"
         elif command == "RTH":
@@ -131,8 +133,13 @@ def update_physics():
 def run_simulator():
     global target_alt # Declare global to allow access
     target_alt = MAX_ALTITUDE
+    
+    # Generate a unique ID to avoid "session taken over" if multiple simulators run
+    unique_id = f"{CLIENT_ID}_{random.randint(1000, 9999)}"
+    print(f"[SIMULATOR] Starting with unique ID: {unique_id}")
+
     # Support paho-mqtt version 2.0+
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, CLIENT_ID)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, unique_id)
     client.on_connect = on_connect
     client.on_message = on_message
 
@@ -150,7 +157,7 @@ def run_simulator():
         
         # Publish Telemetry
         telemetry = {
-            "id": CLIENT_ID,
+            "id": unique_id, # Use the unique ID here too!
             "state": state,
             "lat": round(lat, 6),
             "lng": round(lng, 6),
@@ -162,7 +169,7 @@ def run_simulator():
         
         client.publish(TOPIC_TELEMETRY, json.dumps(telemetry))
         
-        # Visual feedback (chỉ in log 1 lần mỗi giây để đỡ rối terminal)
+        # Visual feedback (only print log once per second)
         if int(time.time() * 10) % 10 == 0:
             print(f"STATUS: {state} | POS: {lat:.6f}, {lng:.6f} | ALT: {alt:.1f}m | BAT: {battery:.1f}%", end="\r")
         

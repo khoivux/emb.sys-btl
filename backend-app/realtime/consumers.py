@@ -25,9 +25,14 @@ class DroneConsumer(AsyncWebsocketConsumer):
     # Receive message from the drone_updates group
     async def drone_telemetry(self, event):
         message = event["message"]
-
-        # Send telemetry to the connected WebSocket client (Frontend)
         await self.send(text_data=json.dumps({
             "type": "telemetry",
+            "data": message
+        }))
+
+    async def drone_discovered(self, event):
+        message = event["message"]
+        await self.send(text_data=json.dumps({
+            "type": "discovery",
             "data": message
         }))
