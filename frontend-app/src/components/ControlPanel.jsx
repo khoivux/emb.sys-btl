@@ -48,8 +48,14 @@ const ControlPanel = ({ drones, onCommand }) => {
     };
   }, []);
   if (droneIds.length === 0) return (
-    <div className="absolute top-4 left-4 p-4 bg-slate-900/80 backdrop-blur-md rounded-xl text-white shadow-2xl border border-slate-700/50">
-      Cực chờ tín hiệu từ Drone...
+    <div className="absolute top-4 right-4 z-10 w-80">
+      <div className="p-6 bg-slate-900/80 backdrop-blur-md rounded-2xl text-white shadow-2xl border border-dashed border-slate-700/50 flex flex-col items-center gap-4">
+        <div className="w-12 h-12 rounded-full border-2 border-slate-700 border-t-blue-500 animate-spin"></div>
+        <div className="text-center">
+            <h3 className="text-sm font-bold text-slate-300">Đang chờ tín hiệu...</h3>
+            <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-tighter">Vui lòng khởi động Mock Drone hoặc ESP32</p>
+        </div>
+      </div>
     </div>
   );
 
@@ -85,25 +91,37 @@ const ControlPanel = ({ drones, onCommand }) => {
       {/* Control Buttons */}
       <div className="p-4 bg-slate-900/80 backdrop-blur-md rounded-2xl text-white shadow-2xl border border-slate-700/50 grid grid-cols-2 gap-2">
         <button 
-          onClick={() => onCommand(drone.id, 'TAKEOFF')}
+          onClick={() => {
+            console.log("Button Clicked: TAKEOFF", drone.id || drone.device_id);
+            onCommand(drone.id || drone.device_id, 'TAKEOFF');
+          }}
           className="flex items-center justify-center gap-2 p-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all"
         >
           <PlaneTakeoff size={20} /> Cất cánh
         </button>
         <button 
-          onClick={() => onCommand(drone.id, 'LAND')}
+          onClick={() => {
+            console.log("Button Clicked: LAND", drone.id || drone.device_id);
+            onCommand(drone.id || drone.device_id, 'LAND');
+          }}
           className="flex items-center justify-center gap-2 p-3 bg-orange-600 hover:bg-orange-500 rounded-xl transition-all"
         >
           <PlaneLanding size={20} /> Hạ cánh
         </button>
         <button 
-          onClick={() => onCommand(drone.id, 'RTH')}
+          onClick={() => {
+            console.log("Button Clicked: RTH", drone.id || drone.device_id);
+            onCommand(drone.id || drone.device_id, 'RTH');
+          }}
           className="flex items-center justify-center gap-2 p-3 bg-teal-600 hover:bg-teal-500 rounded-xl transition-all"
         >
           <Home size={20} /> RTH
         </button>
         <button 
-          onClick={() => onCommand(drone.id, 'EMERGENCY')}
+          onClick={() => {
+            console.log("Button Clicked: EMERGENCY", drone.id || drone.device_id);
+            onCommand(drone.id || drone.device_id, 'EMERGENCY');
+          }}
           className="flex items-center justify-center gap-2 p-3 bg-red-600 hover:bg-red-500 rounded-xl transition-all font-bold"
         >
           <AlertOctagon size={20} /> Dừng khẩn
@@ -116,11 +134,11 @@ const ControlPanel = ({ drones, onCommand }) => {
         <div className="flex items-center gap-6">
             {/* Altitude Controls */}
             <div className="flex flex-col gap-2">
-                <button onMouseDown={() => onCommand(drone.id, 'CLIMB')} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'CLIMB')} 
                     className="w-10 h-10 bg-blue-500/20 hover:bg-blue-500/40 text-blue-400 rounded-lg flex items-center justify-center border border-blue-500/20 active:scale-95 transition-all">
                     <ArrowUpCircle size={20} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'DESCEND')} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'DESCEND')} 
                     className="w-10 h-10 bg-orange-500/20 hover:bg-orange-500/40 text-orange-400 rounded-lg flex items-center justify-center border border-orange-500/20 active:scale-95 transition-all">
                     <ArrowDownCircle size={20} />
                 </button>
@@ -128,27 +146,27 @@ const ControlPanel = ({ drones, onCommand }) => {
 
             {/* Directional Pad */}
             <div className="grid grid-cols-3 gap-1">
-                <button onMouseDown={() => onCommand(drone.id, 'YAW_LEFT')} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'YAW_LEFT')} 
                     className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
                     <RotateCcw size={16} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'MOVE', { direction: 'FORWARD' })} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'MOVE', { direction: 'FORWARD' })} 
                     className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
                     <Navigation size={18} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'YAW_RIGHT')} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'YAW_RIGHT')} 
                     className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
                     <RotateCw size={16} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'MOVE', { direction: 'LEFT' })} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'MOVE', { direction: 'LEFT' })} 
                     className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all -rotate-90">
                     <Navigation size={18} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'MOVE', { direction: 'BACKWARD' })} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'MOVE', { direction: 'BACKWARD' })} 
                     className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-180">
                     <Navigation size={18} />
                 </button>
-                <button onMouseDown={() => onCommand(drone.id, 'MOVE', { direction: 'RIGHT' })} 
+                <button onMouseDown={() => onCommand(drone.id || drone.device_id, 'MOVE', { direction: 'RIGHT' })} 
                     className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-90">
                     <Navigation size={18} />
                 </button>

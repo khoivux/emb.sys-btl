@@ -1,7 +1,9 @@
 Django>=4.2,<5.0
 daphne
 channels
+channels-redis
 djangorestframework
 django-cors-headers
 paho-mqtt
 asgiref
+djangorestframework-simplejwt

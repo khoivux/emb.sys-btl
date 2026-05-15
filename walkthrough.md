@@ -1,106 +1,38 @@
-# Walkthrough - Drone Management System
+# Hướng dẫn sử dụng: Hệ thống Quản lý Drone
 
-Hệ thống quản lý Drone của bạn đã hoàn thành với đầy đủ 5 nhóm chức năng như yêu cầu. Dưới đây là tóm tắt thành quả và hướng dẫn vận hành.
+Hệ thống cho phép theo dõi và điều khiển Drone thời gian thực. Dưới đây là các bước để vận hành hệ thống.
 
-## 🏗️ Architecture Overview
+## 1. Chuẩn bị Phần cứng (ESP32)
+1.  **Cài đặt Firmware:** Nạp code trong thư mục `esp32-firmware/` vào ESP32.
+    *   Đảm bảo file `mqtt.py` và `main.py` là bản mới nhất.
+2.  **Cấu hình Wifi & Server:** Mở `main.py` trên ESP32, sửa `WIFI_SSID`, `WIFI_PASS` và `MQTT_SERVER` (IP máy tính của bạn).
+3.  **Cấp nguồn:** Bật nguồn ESP32, nó sẽ tự động kết nối và gửi dữ liệu về hệ thống.
 
-Hệ thống được thiết kế theo mô hình **Real-time Event-driven**:
-1.  **ESP32 (MicroPython):** Chạy logic mô phỏng bay (FSM) và đẩy tọa độ GPS lên MQTT Broker.
-2.  **Infrastructure (Docker):** Chạy **Mosquitto Broker** để kết nối các thành phần.
-3.  **Backend (Django):** 
-    *   `mqtt_listener.py`: Lắng nghe MQTT và lưu vào SQLite DB.
-    *   `WebSockets`: Đẩy dữ liệu từ MQTT trực tiếp lên UI mà không cần tải lại trang.
-4.  **Frontend (React):** Dashboard hiện đại với **Leaflet Map** dùng để theo dõi vị trí drone real-time.
+## 2. Khởi động Hệ thống (Máy tính)
+Yêu cầu: Đã cài đặt Docker và Docker Desktop.
 
----
+1.  Mở Terminal tại thư mục gốc của dự án.
+2.  Chạy lệnh:
+    ```powershell
+    docker-compose up --build
+    ```
+3.  Truy cập giao diện Web tại địa chỉ: `http://localhost:5173` (hoặc IP máy tính của bạn port 5173).
 
-## ✨ Features Implemented
+## 3. Các thao tác trên Giao diện Web
+### A. Quét và Nhận Drone (Tab Discovery)
+1.  Vào tab **Discovery** (biểu tượng Radar).
+2.  Khi ESP32 hoạt động, nó sẽ hiện lên trong danh sách "Drone mới phát hiện".
+3.  Nhấn nút **Nhận Drone** và đặt tên cho thiết bị (ví dụ: Drone-01).
 
-### 1. Điều hành & Mô phỏng (ESP32)
-- ✅ **MicroPython Logic:** Giả lập Takeoff, Flying, Land và RTH.
-- ✅ **GPS Physics:** Tọa độ thay đổi mượt mà dựa trên hướng bay và vận tốc tại PTIT Hà Nội.
-- ✅ **Telemetry:** Pin giảm dần theo thời gian, tự động RTH khi pin yếu.
+### B. Quản lý và Theo dõi (Tab My Drones)
+1.  Vào tab **My Drones** để xem danh sách các thiết bị bạn đang sở hữu.
+2.  **Trạng thái Real-time:** Thẻ Drone sẽ sáng xanh khi Online và chuyển sang xám khi Offline (rút nguồn) ngay lập tức mà không cần F5.
+3.  **Sửa/Xóa:** Nhấn biểu tượng Bút chì để đổi tên hoặc Thùng rác để xóa drone khỏi tài khoản.
 
-### 2. Dashboard Giám sát (Frontend)
-- ✅ **Leaflet Map:** Drone di chuyển trên bản đồ thời gian thực.
-- ✅ **Telemetry Bar:** Hiển thị % Pin, Độ cao, Trạng thái (Flying/Idle).
-- ✅ **Rich Aesthetics:** Giao diện tối (Dark mode), hiệu ứng Glassmorphism siêu cao cấp.
+### C. Điều khiển và Radar (Tab Dashboard)
+1.  Xem vị trí các Drone trên bản đồ thời gian thực.
+2.  Sử dụng bảng điều khiển bên phải để gửi lệnh cho Drone (Cất cánh, Hạ cánh, Bay tới tọa độ...).
 
-### 3. Điều khiển (Backend Gateway)
-- ✅ **MQTT Bridge:** Trung chuyển dữ liệu giữa phần cứng và phần mềm.
-- ✅ **Control API:** Sẵn sàng để gửi lệnh điều khiển ngược lại cho drone.
-
----
-
-## 🚀 Getting Started (Setup)
-
-Nếu bạn vừa clone project này về, hãy thực hiện các bước chuẩn bị sau:
-
-### 1. Chuẩn bị Backend
-```bash
-cd backend-app
-# Cài đặt các thư viện cần thiết
-pip install -r requirements.txt
-
-# Khởi tạo cơ sở dữ liệu (SQLite)
-python manage.py migrate
-```
-
-### 2. Chuẩn bị Frontend
-```bash
-cd frontend-app
-# Cài đặt các gói giao diện
-npm install
-```
-
----
-
-## 🏃 Vận hành hệ thống
-
-Mở các terminal riêng biệt để chạy các thành phần sau:
-
-### Bước 1: Khởi động MQTT Broker (Infrastructure)
-*Yêu cầu: Đã cài Docker Desktop*
-```bash
-cd infrastructure
-docker-compose up -d mosquitto
-```
-
-### Bước 2: Khởi động Backend (Django & MQTT Bridge)
-*MQTT Bridge đã được tích hợp tự động vào Backend, bạn chỉ cần chạy server:*
-```bash
-cd backend-app
-python manage.py runserver 8000
-```
-
-### Bước 3: Khởi động Mock Drone (Bộ giả lập Drone)
-```bash
-cd tools
-# Drone ảo sẽ tự động cất cánh tại PTIT Hà Nội (Hoặc vị trí thực tế của bạn)
-python mock_drone.py
-```
-
-### Bước 4: Khởi động Frontend Dashboard
-```bash
-cd frontend-app
-npm run dev
-```
-👉 Mở trình duyệt tại: **http://localhost:3000** (hoặc port do terminal hiển thị).
-
-#### Cách B: Chạy trên thiết bị ESP32 thật (Khi đã nạp code)
-```bash
-# Nạp code trong thư mục esp32-firmware vào chip
-# Đảm bảo ESP32 và máy tính của bạn cùng mạng WiFi
-```
-
----
-
-## 🔍 Verification Results
-
-- **MQTT Connectivity:** ✅ Verified with local Mosquitto.
-- **Real-time Sync:** ✅ WebSockets latency < 100ms.
-- **Database:** ✅ Telemetry logs are persisted to SQLite.
-- **Aesthetics:** ✅ High-quality UI with Lucide Icons and Tailwind CSS.
-
-> [!TIP]
-> Bạn có thể thay đổi `MQTT_SERVER` trong `esp32-firmware/main.py` thành IP máy tính của bạn nếu muốn chạy trên board ESP32 thật!
+## 4. Kiểm tra lỗi (Nếu có)
+*   **Không thấy Drone trên Web:** Kiểm tra xem ESP32 có kết nối được Wifi không (xem qua Serial Monitor của Arduino/Thonny).
+*   **Web không cập nhật:** Đảm bảo container `redis` và `mqtt_listener` đang chạy trong Docker Desktop.
