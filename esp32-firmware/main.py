@@ -7,10 +7,7 @@ import math
 from mqtt import MQTTClient
 
 # --- 1. CẤU HÌNH HỆ THỐNG ---
-WIFI_SSID = "QuocKhanh"
-WIFI_PASS = "12345678910"
-MQTT_SERVER = "0.tcp.ap.ngrok.io" 
-MQTT_PORT = 17900
+from boot import MQTT_SERVER, MQTT_PORT
 
 # Tự động lấy ID duy nhất của chip ESP32 (MAC Address)
 raw_id = machine.unique_id()
@@ -26,22 +23,7 @@ target_lat, target_lng = lat, lng
 battery = 95.0
 
 # --- 3. KẾT NỐI WIFI ---
-def connect_wifi():
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not wlan.isconnected():
-        print('Đang nối WiFi:', WIFI_SSID)
-        wlan.connect(WIFI_SSID, WIFI_PASS)
-        timeout = 20
-        start = time.time()
-        while not wlan.isconnected() and (time.time() - start) < timeout:
-            print(".", end="")
-            time.sleep(1)
-    if wlan.isconnected():
-        print('\nWiFi OK! IP:', wlan.ifconfig()[0])
-    else:
-        print('\nWiFi lỗi! Đang khởi động lại...')
-        machine.reset()
+# WiFi đã được kết nối tự động trong file boot.py
 
 # --- 4. XỬ LÝ LỆNH TỪ WEB ---
 def on_message(topic, msg):
@@ -72,7 +54,7 @@ def on_message(topic, msg):
 
 # --- 5. CHƯƠNG TRÌNH CHÍNH ---
 def main():
-    connect_wifi()
+    # WiFi đã được tự động kết nối trên boot.py
     client = MQTTClient(CLIENT_ID, MQTT_SERVER, port=MQTT_PORT, keepalive=10)
     client.set_callback(on_message)
     
