@@ -53,3 +53,14 @@ services:
     depends_on:
       - backend
     restart: always
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: always
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: tcp mqtt_broker:1883
+    ports:
+      - "4040:4040"
+    depends_on:
+      - mqtt_broker

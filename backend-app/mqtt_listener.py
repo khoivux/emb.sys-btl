@@ -36,13 +36,43 @@ def on_message(client, userdata, msg):
         state = data.get("state") or "UNKNOWN"
         is_active = (state != "OFFLINE")
         
-        drone, created = Drone.objects.get_or_create(
-            device_id=device_id,
-            defaults={'name': f"Drone {device_id[:6]}"}
-        )
-        drone.is_active = is_active
-        drone.state = state
-        drone.save()
+        channel_layer = get_channel_layer()
+        try:
+            drone = Drone.objects.get(device_id=device_id)
+            if drone.owner is None and not is_active:
+                # Nếu thiết bị chưa ghép đôi mà ngắt kết nối (offline) -> Xóa hẳn khỏi DB
+                drone_id = drone.id
+                drone.delete()
+                print(f"🗑️ [DISCOVERY] Removed inactive unclaimed drone: {device_id}")
+                
+                # Phát thông báo qua WebSockets để Frontend biết mà xóa khỏi giao diện quét
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        "drone_updates",
+                        {
+                            "type": "drone_lost",
+                            "message": {
+                                "id": drone_id,
+                                "device_id": device_id
+                            }
+                        }
+                    )
+                return
+            
+            drone.is_active = is_active
+            drone.state = state
+            drone.save()
+        except Drone.DoesNotExist:
+            if not is_active:
+                print(f"⚠️ [DISCOVERY] Ignoring OFFLINE message for non-existent drone: {device_id}")
+                return
+            
+            drone = Drone.objects.create(
+                device_id=device_id,
+                name=f"Drone {device_id[:6]}",
+                is_active=is_active,
+                state=state
+            )
 
         print(f"📡 [STATE CHANGE] {device_id} is now {'ONLINE' if is_active else 'OFFLINE'} (State: {state})")
 
