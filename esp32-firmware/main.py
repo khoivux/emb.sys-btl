@@ -9,7 +9,8 @@ from mqtt import MQTTClient
 # --- 1. CẤU HÌNH HỆ THỐNG ---
 WIFI_SSID = "QuocKhanh"
 WIFI_PASS = "12345678910"
-MQTT_SERVER = "192.168.20.47" 
+MQTT_SERVER = "0.tcp.ap.ngrok.io" 
+MQTT_PORT = 17900
 
 # Tự động lấy ID duy nhất của chip ESP32 (MAC Address)
 raw_id = machine.unique_id()
@@ -72,7 +73,7 @@ def on_message(topic, msg):
 # --- 5. CHƯƠNG TRÌNH CHÍNH ---
 def main():
     connect_wifi()
-    client = MQTTClient(CLIENT_ID, MQTT_SERVER, keepalive=10)
+    client = MQTTClient(CLIENT_ID, MQTT_SERVER, port=MQTT_PORT, keepalive=10)
     client.set_callback(on_message)
     
     # Thiết lập "Di chúc": Nếu mất kết nối đột ngột, Server sẽ nhận được tin nhắn OFFLINE
