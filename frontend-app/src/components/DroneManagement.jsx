@@ -5,7 +5,6 @@ import { Plus, Trash2, Cpu, Battery, Signal, Navigation, Loader2, Edit2, X, Shie
 const DroneManagement = (props) => {
     const { token } = useAuth();
     const [drones, setDrones] = useState([]);
-    const [unclaimedDrones, setUnclaimedDrones] = useState([]);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [editingDrone, setEditingDrone] = useState(null);
     const [newDrone, setNewDrone] = useState({ device_id: '', name: '' });
@@ -15,12 +14,8 @@ const DroneManagement = (props) => {
 
     const fetchData = async () => {
         try {
-            const [res, discRes] = await Promise.all([
-                fetch(`${baseUrl}/api/drones/`, { headers: { 'Authorization': `Bearer ${token}` } }),
-                fetch(`${baseUrl}/api/drones/discovery/`, { headers: { 'Authorization': `Bearer ${token}` } })
-            ]);
+            const res = await fetch(`${baseUrl}/api/drones/`, { headers: { 'Authorization': `Bearer ${token}` } });
             if (res.ok) setDrones(await res.json());
-            if (discRes.ok) setUnclaimedDrones(await discRes.json());
         } catch (err) {
             console.error("Lỗi tải dữ liệu:", err);
         }
@@ -49,26 +44,7 @@ const DroneManagement = (props) => {
         return () => window.removeEventListener('drone_claimed', handleRefresh);
     }, [token]);
 
-    const handleClaim = async (id, name) => {
-        setLoading(true);
-        const res = await fetch(`${baseUrl}/api/drones/${id}/claim/`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ name })
-        });
-        if (res.ok) {
-            // Cập nhật State cục bộ ngay lập tức
-            const claimed = unclaimedDrones.find(d => d.id === id);
-            setUnclaimedDrones(prev => prev.filter(d => d.id !== id));
-            if (claimed) {
-                setDrones(prev => [...prev, { ...claimed, name, owner: true, is_active: true }]);
-            }
-        }
-        setLoading(false);
-    };
+
 
     const handleUpdateDrone = async (e) => {
         e.preventDefault();
@@ -143,39 +119,7 @@ const DroneManagement = (props) => {
                 </button>
             </div>
 
-            {/* DISCOVERY SECTION */}
-            {unclaimedDrones.length > 0 && (
-                <div className="mb-12 animate-in slide-in-from-top duration-500">
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="h-2 w-2 bg-blue-500 rounded-full animate-ping"></div>
-                        <h2 className="text-sm font-black text-blue-400 uppercase tracking-widest">Phát hiện thiết bị mới ở gần</h2>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {unclaimedDrones.map(drone => (
-                            <div key={drone.id} className="bg-blue-600/5 border border-blue-500/20 rounded-[32px] p-6 flex flex-col justify-between hover:bg-blue-600/10 transition-colors">
-                                <div className="flex items-center gap-4 mb-4">
-                                    <div className="w-12 h-12 bg-blue-600/20 text-blue-400 rounded-2xl flex items-center justify-center">
-                                        <Signal size={24} />
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-blue-400 font-black uppercase mb-1">Chưa ghép đôi</p>
-                                        <p className="text-white text-xs font-mono">{drone.device_id}</p>
-                                    </div>
-                                </div>
-                                <button 
-                                    onClick={() => handleClaim(drone.id, `Drone ${drone.device_id.slice(0,4)}`)}
-                                    disabled={loading}
-                                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2"
-                                >
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
-                                    GHÉP ĐÔI NGAY
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="h-px bg-white/5 mt-10"></div>
-                </div>
-            )}
+
 
             {/* MAIN LIST */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

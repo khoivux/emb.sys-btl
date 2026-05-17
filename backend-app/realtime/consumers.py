@@ -36,3 +36,10 @@ class DroneConsumer(AsyncWebsocketConsumer):
             "type": "discovery",
             "data": message
         }))
+
+    async def drone_lost(self, event):
+        message = event["message"]
+        await self.send(text_data=json.dumps({
+            "type": "drone_lost",
+            "data": message
+        }))

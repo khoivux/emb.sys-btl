@@ -38,8 +38,13 @@ class DroneViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_staff:
             return Drone.objects.all()
-        # Trả về drones của user HOẶC drones chưa có chủ (để user có thể claim)
-        return Drone.objects.filter(Q(owner=user) | Q(owner__isnull=True))
+        
+        # Chỉ cho phép claim thiết bị chưa có chủ (owner là null)
+        if self.action == 'claim':
+            return Drone.objects.filter(Q(owner=user) | Q(owner__isnull=True))
+            
+        # Các action khác (list, retrieve, update, destroy) chỉ truy xuất drone của chính user
+        return Drone.objects.filter(owner=user)
 
     @action(detail=False, methods=['get'])
     def discovery(self, request):
@@ -59,6 +64,31 @@ class DroneViewSet(viewsets.ModelViewSet):
             drone.name = new_name
         drone.save()
         return Response({"status": "Ghép đôi thành công!", "drone": self.get_serializer(drone).data})
+
+    def create(self, request, *args, **kwargs):
+        device_id = request.data.get('device_id')
+        name = request.data.get('name')
+        
+        if not device_id or not name:
+            return Response({"error": "device_id và name là bắt buộc!"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            drone = Drone.objects.get(device_id=device_id)
+            if drone.owner is not None:
+                if drone.owner == request.user:
+                    return Response({"error": "Bạn đã sở hữu Drone này rồi!"}, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return Response({"error": "Drone này đã được sở hữu bởi người dùng khác!"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Tự động claim cho user luôn
+            drone.owner = request.user
+            drone.name = name
+            drone.save()
+            
+            serializer = self.get_serializer(drone)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Drone.DoesNotExist:
+            return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         # Tự động gán owner là người dùng đang đăng nhập khi tạo thủ công

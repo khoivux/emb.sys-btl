@@ -7,6 +7,23 @@ export const useDroneSocket = () => {
   const socketRef = useRef(null);
 
   useEffect(() => {
+    const token = localStorage.getItem('token');
+    const hostname = window.location.hostname;
+    if (token) {
+      fetch(`http://${hostname}:8000/api/drones/discovery/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setDiscoveredDrones(data);
+        }
+      })
+      .catch(err => console.error("Lỗi lấy danh sách discovery ban đầu:", err));
+    }
+  }, []);
+
+  useEffect(() => {
     let reconnectTimeout;
     const hostname = window.location.hostname;
     
@@ -45,6 +62,8 @@ export const useDroneSocket = () => {
                   if (prev.find(d => d.device_id === data.data.device_id)) return prev;
                   return [...prev, data.data];
               });
+            } else if (data.type === 'drone_lost') {
+              setDiscoveredDrones(prev => prev.filter(d => d.device_id !== data.data.device_id));
             } else if (data.type === 'drone_deleted') {
               setDrones(prev => {
                   const newDrones = { ...prev };
