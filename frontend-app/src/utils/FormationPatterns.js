@@ -11,6 +11,57 @@ const LAT_PER_METER = 0.000009;
 const LNG_PER_METER = 0.0000115;
 
 /**
+ * Tối ưu hóa việc phân bổ drone vào các vị trí đích để giảm thiểu tổng quãng đường bay.
+ * Sử dụng giải thuật Tham lam (Greedy Proximity Assignment) để chọn vị trí gần nhất còn trống cho mỗi drone.
+ * @param {Array} drones - Danh sách drone hiện tại [{ device_id, latitude, longitude }]
+ * @param {Array} targets - Danh sách các tọa độ đích [{ lat, lng }]
+ * @returns {Array} [{ droneId, targetLat, targetLng }]
+ */
+export function optimizeAssignments(drones, targets) {
+  if (drones.length !== targets.length || targets.length === 0) {
+    // Nếu không khớp số lượng, fallback về gán theo thứ tự mặc định
+    return targets.map((t, i) => ({
+      droneId: drones[i]?.device_id || `unknown_${i}`,
+      targetLat: t.lat,
+      targetLng: t.lng
+    }));
+  }
+
+  const assigned = [];
+  const availableTargets = [...targets];
+  
+  for (const drone of drones) {
+    let closestIndex = 0;
+    let minDistance = Infinity;
+
+    // Chỉ tính toán khoảng cách nếu drone có tọa độ hợp lệ
+    if (typeof drone.latitude === 'number' && !isNaN(drone.latitude) &&
+        typeof drone.longitude === 'number' && !isNaN(drone.longitude)) {
+      for (let i = 0; i < availableTargets.length; i++) {
+        const target = availableTargets[i];
+        const dLat = target.lat - drone.latitude;
+        const dLng = target.lng - drone.longitude;
+        const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestIndex = i;
+        }
+      }
+    }
+
+    const target = availableTargets.splice(closestIndex, 1)[0];
+    assigned.push({
+      droneId: drone.device_id,
+      targetLat: target.lat,
+      targetLng: target.lng
+    });
+  }
+
+  return assigned;
+}
+
+/**
  * Bay thẳng hàng — dàn drone thành 1 hàng ngang hoặc dọc từ tâm.
  * @param {Array} drones - Danh sách drone [{ device_id, latitude, longitude, ... }]
  * @param {number} centerLat - Vĩ độ tâm đội hình
@@ -24,23 +75,21 @@ export function lineFormation(drones, centerLat, centerLng, direction = 'horizon
   const totalLength = (count - 1) * spacing;
   const startOffset = -totalLength / 2;
 
-  return drones.map((drone, i) => {
+  const targets = [];
+  for (let i = 0; i < count; i++) {
     const offset = startOffset + i * spacing;
-    let targetLat = centerLat;
-    let targetLng = centerLng;
+    let lat = centerLat;
+    let lng = centerLng;
 
     if (direction === 'horizontal') {
-      targetLng += offset * LNG_PER_METER;
+      lng += offset * LNG_PER_METER;
     } else {
-      targetLat += offset * LAT_PER_METER;
+      lat += offset * LAT_PER_METER;
     }
+    targets.push({ lat, lng });
+  }
 
-    return {
-      droneId: drone.device_id,
-      targetLat,
-      targetLng,
-    };
-  });
+  return optimizeAssignments(drones, targets);
 }
 
 /**
@@ -53,40 +102,44 @@ export function lineFormation(drones, centerLat, centerLng, direction = 'horizon
  */
 export function circleFormation(drones, centerLat, centerLng, radiusMeters = 20) {
   const count = drones.length;
-  return drones.map((drone, i) => {
+  const targets = [];
+  for (let i = 0; i < count; i++) {
     const angle = (2 * Math.PI * i) / count - Math.PI / 2; // bắt đầu từ trên (12h)
-    return {
-      droneId: drone.device_id,
-      targetLat: centerLat + Math.sin(angle) * radiusMeters * LAT_PER_METER,
-      targetLng: centerLng + Math.cos(angle) * radiusMeters * LNG_PER_METER,
-    };
-  });
+    targets.push({
+      lat: centerLat + Math.sin(angle) * radiusMeters * LAT_PER_METER,
+      lng: centerLng + Math.cos(angle) * radiusMeters * LNG_PER_METER,
+    });
+  }
+
+  return optimizeAssignments(drones, targets);
 }
 
 /**
  * Xếp lưới — dàn drone thành ô lưới hình chữ nhật.
  * @param {Array} drones - Danh sách drone
- * @param {number} originLat - Vĩ độ gốc (góc trái trên)
+ * @param {number} originLat - Vĩ độ gốc (tâm của lưới)
  * @param {number} originLng - Kinh độ gốc
  * @param {number} columns - Số cột
  * @param {number} spacingMeters - Khoảng cách giữa các drone (mét)
  * @returns {Array} [{ droneId, targetLat, targetLng }]
  */
 export function gridFormation(drones, originLat, originLng, columns = 3, spacingMeters = 10) {
-  // Center the grid on the origin point
-  const rows = Math.ceil(drones.length / columns);
+  const count = drones.length;
+  const rows = Math.ceil(count / columns);
   const gridWidth = (columns - 1) * spacingMeters;
   const gridHeight = (rows - 1) * spacingMeters;
 
-  return drones.map((drone, i) => {
+  const targets = [];
+  for (let i = 0; i < count; i++) {
     const col = i % columns;
     const row = Math.floor(i / columns);
-    return {
-      droneId: drone.device_id,
-      targetLat: originLat - row * spacingMeters * LAT_PER_METER + (gridHeight / 2) * LAT_PER_METER,
-      targetLng: originLng + col * spacingMeters * LNG_PER_METER - (gridWidth / 2) * LNG_PER_METER,
-    };
-  });
+    targets.push({
+      lat: originLat - row * spacingMeters * LAT_PER_METER + (gridHeight / 2) * LAT_PER_METER,
+      lng: originLng + col * spacingMeters * LNG_PER_METER - (gridWidth / 2) * LNG_PER_METER,
+    });
+  }
+
+  return optimizeAssignments(drones, targets);
 }
 
 /**
@@ -182,11 +235,12 @@ export function textFormation(drones, text, centerLat, centerLng, scaleMeters = 
   const textCenterX = maxX / 2;
   const textCenterY = maxY / 2;
 
-  const positions = allPoints.slice(0, drones.length).map((pt, i) => ({
-    droneId: drones[i].device_id,
-    targetLat: centerLat - (pt.y - textCenterY) * scaleMeters * LAT_PER_METER,
-    targetLng: centerLng + (pt.x - textCenterX) * scaleMeters * LNG_PER_METER,
+  const targets = allPoints.slice(0, drones.length).map(pt => ({
+    lat: centerLat - (pt.y - textCenterY) * scaleMeters * LAT_PER_METER,
+    lng: centerLng + (pt.x - textCenterX) * scaleMeters * LNG_PER_METER,
   }));
+
+  const positions = optimizeAssignments(drones, targets);
 
   return { positions, minDronesRequired };
 }

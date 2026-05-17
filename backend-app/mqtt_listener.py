@@ -23,12 +23,79 @@ def on_connect(client, userdata, flags, rc):
 # Global cache để tránh query DB 120 lần/giây
 drone_cache = {}
 
+import queue
+import threading
+
+db_queue = queue.Queue()
+
+def db_worker():
+    """Background worker thread to perform all database write operations."""
+    from django import db
+    from drones.models import Drone, TelemetryLog
+    print("[DB WORKER] Background database worker thread started.")
+    while True:
+        try:
+            task = db_queue.get()
+            if task is None:
+                break
+            
+            db.close_old_connections()
+            task_type = task.get("type")
+            
+            if task_type == "save_drone":
+                device_id = task["device_id"]
+                state = task["state"]
+                is_active = task["is_active"]
+                try:
+                    drone = Drone.objects.get(device_id=device_id)
+                    drone.is_active = is_active
+                    drone.state = state
+                    drone.save()
+                except Exception as ex:
+                    print(f"❌ [DB WORKER] Error saving drone {device_id}: {ex}")
+                    
+            elif task_type == "create_telemetry_log":
+                device_id = task["device_id"]
+                lat = task["lat"]
+                lng = task["lng"]
+                alt = task["alt"]
+                battery = task["battery"]
+                state = task["state"]
+                try:
+                    drone = Drone.objects.get(device_id=device_id)
+                    TelemetryLog.objects.create(
+                        drone=drone,
+                        latitude=lat,
+                        longitude=lng,
+                        altitude=alt,
+                        battery=battery,
+                        state=state
+                    )
+                except Exception as ex:
+                    print(f"❌ [DB WORKER] Error creating telemetry log for {device_id}: {ex}")
+            
+            db_queue.task_done()
+        except Exception as e:
+            print(f"❌ [DB WORKER] Critical error in database worker thread: {e}")
+
+# Khởi chạy background worker thread
+worker_thread = threading.Thread(target=db_worker, daemon=True)
+worker_thread.start()
+
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode())
         device_id = data.get("device_id") or data.get("id")
         if not device_id:
             return
+
+        # Check telemetry lag/delay
+        import time as _time
+        drone_ts = data.get("timestamp")
+        if drone_ts:
+            delay = _time.time() - drone_ts
+            if delay > 0.5:
+                print(f"⚠️  [MQTT LAG] Telemetry delay for {device_id} is {delay:.2f}s! (Queue backing up)")
 
         # 1. Update or Create Drone Status (Sử dụng Cache RAM)
         state = data.get("state") or "UNKNOWN"
@@ -42,83 +109,90 @@ def on_message(client, userdata, msg):
             )
             drone_cache[device_id] = drone
 
-        # Chỉ ghi DB nếu trạng thái có sự thay đổi thực sự
-        if drone.is_active != is_active or drone.state != state:
+        state_changed = (drone.is_active != is_active or drone.state != state)
+
+        # Cập nhật thông tin trong memory cache trước
+        if state_changed:
             drone.is_active = is_active
             drone.state = state
-            drone.save()
-            print(f"📡 [STATE CHANGE] {device_id} is now {'ONLINE' if is_active else 'OFFLINE'} (State: {state})")
+            
+            # Gửi task cập nhật Drone DB không đồng bộ
+            db_queue.put({
+                "type": "save_drone",
+                "device_id": device_id,
+                "state": state,
+                "is_active": is_active
+            })
+            print(f"📡 [STATE CHANGE QUEUED] {device_id} -> {state}")
 
         # Throttle DB Writes (Chỉ ghi DB 1 giây/lần mỗi drone để tránh SQLite lock)
-        import time
-        current_time = time.time()
+        current_time = _time.time()
         last_log_time = getattr(drone, '_last_db_write', 0)
         
-        if current_time - last_log_time >= 1.0:
-            # Lấy pin cũ từ TelemetryLog nếu bản tin không có pin
-            current_battery = data.get("battery")
-            if current_battery is None:
-                last_log = TelemetryLog.objects.filter(drone=drone, battery__gt=0).order_by('-timestamp').first()
-                current_battery = last_log.battery if last_log else 0
-                
-            log = TelemetryLog.objects.create(
-                drone=drone,
-                latitude=data.get("latitude") or data.get("lat") or 0,
-                longitude=data.get("longitude") or data.get("lng") or 0,
-                altitude=data.get("altitude") or data.get("alt") or 0,
-                battery=current_battery,
-                state=state
-            )
-            drone._last_db_write = current_time
+        # Luôn lấy pin hiện tại hoặc pin từ cache
+        current_battery = data.get("battery")
+        if current_battery is None:
+            current_battery = getattr(drone, '_last_battery', 100.0)
         else:
-            # Fake log object for WebSocket broadcast
-            class FakeLog:
-                pass
-            log = FakeLog()
-            log.latitude = data.get("latitude") or data.get("lat") or 0
-            log.longitude = data.get("longitude") or data.get("lng") or 0
-            log.altitude = data.get("altitude") or data.get("alt") or 0
-            log.battery = data.get("battery") or 0
-            log.state = state
-            from django.utils import timezone
-            log.timestamp = timezone.now()
+            drone._last_battery = current_battery
 
-        # 3. Broadcast to WebSockets (Django Channels)
-        channel_layer = get_channel_layer()
-        if channel_layer:
-            # Gửi Telemetry & Trạng thái Online/Offline
-            async_to_sync(channel_layer.group_send)(
-                "drone_updates",
-                {
-                    "type": "drone_telemetry",
-                    "message": {
-                        "id": drone.id,
-                        "device_id": drone.device_id,
-                        "name": drone.name,
-                        "lat": log.latitude,
-                        "lng": log.longitude,
-                        "alt": log.altitude,
-                        "battery": log.battery,
-                        "state": log.state,
-                        "is_active": drone.is_active,
-                        "timestamp": log.timestamp.isoformat()
-                    }
-                }
-            )
-            
-            # Gửi Discovery nếu chưa có chủ
-            if drone.owner is None:
+        lat = data.get("latitude") or data.get("lat") or 0
+        lng = data.get("longitude") or data.get("lng") or 0
+        alt = data.get("altitude") or data.get("alt") or 0
+
+        should_log = (current_time - last_log_time >= 1.0 or state_changed)
+        if should_log:
+            # Gửi task tạo TelemetryLog không đồng bộ
+            db_queue.put({
+                "type": "create_telemetry_log",
+                "device_id": device_id,
+                "lat": lat,
+                "lng": lng,
+                "alt": alt,
+                "battery": current_battery,
+                "state": state
+            })
+            drone._last_db_write = current_time
+
+            # 3. Broadcast to WebSockets (Django Channels) - Thực hiện tức thì, không bị block bởi DB!
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                import datetime
+                timestamp_str = datetime.datetime.now().isoformat()
+                
+                # Gửi Telemetry & Trạng thái Online/Offline
                 async_to_sync(channel_layer.group_send)(
                     "drone_updates",
                     {
-                        "type": "drone_discovered",
+                        "type": "drone_telemetry",
                         "message": {
                             "id": drone.id,
                             "device_id": drone.device_id,
-                            "name": drone.name
+                            "name": drone.name,
+                            "lat": lat,
+                            "lng": lng,
+                            "alt": alt,
+                            "battery": current_battery,
+                            "state": state,
+                            "is_active": drone.is_active,
+                            "timestamp": timestamp_str
                         }
                     }
                 )
+                
+                # Gửi Discovery nếu chưa có chủ
+                if drone.owner is None:
+                    async_to_sync(channel_layer.group_send)(
+                        "drone_updates",
+                        {
+                            "type": "drone_discovered",
+                            "message": {
+                                "id": drone.id,
+                                "device_id": drone.device_id,
+                                "name": drone.name
+                            }
+                        }
+                    )
     except Exception as e:
         print(f"Error processing MQTT message: {e}")
 
