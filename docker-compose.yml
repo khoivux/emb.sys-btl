@@ -64,3 +64,135 @@ services:
       - "4040:4040"
     depends_on:
       - mqtt_broker
+  mock_1:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_1
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_2:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_2
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_3:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_3
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_4:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_4
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_5:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_5
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_6:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_6
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_7:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_7
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_8:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_8
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_9:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_9
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_10:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_10
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_11:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_11
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+
+  mock_12:
+    build: ./backend-app
+    environment:
+      - MQTT_HOST=mqtt_broker
+    command: python /tools/mock_drone.py --id mock_12
+    volumes:
+      - ./tools:/tools
+    depends_on:
+      - mqtt_broker
+    restart: always
+

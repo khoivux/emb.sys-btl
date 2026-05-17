@@ -8,7 +8,7 @@ class Drone(models.Model):
     is_active = models.BooleanField(default=False)
     last_seen = models.DateTimeField(auto_now=True)
     battery = models.FloatField(default=100.0)
-    state = models.CharField(max_length=20, default="IDLE")
+    state = models.CharField(max_length=20, default='IDLE')
     
     # Thresholds
     min_battery_threshold = models.FloatField(default=20.0)

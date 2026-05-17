@@ -48,13 +48,18 @@ export const useDroneSocket = () => {
             
             if (data.type === 'telemetry') {
               const droneData = data.data;
-              console.log("🛰️ Telemetry for:", droneData.device_id, "Active:", droneData.is_active);
+              const normalizedData = {
+                ...droneData,
+                latitude: droneData.latitude !== undefined ? droneData.latitude : droneData.lat,
+                longitude: droneData.longitude !== undefined ? droneData.longitude : droneData.lng,
+              };
+              console.log("🛰️ Telemetry for:", normalizedData.device_id, "Lat:", normalizedData.latitude, "Lng:", normalizedData.longitude);
               
               setDrones((prev) => ({
                 ...prev,
-                [droneData.device_id || droneData.id]: {
-                    ...prev[droneData.device_id || droneData.id],
-                    ...droneData
+                [normalizedData.device_id || normalizedData.id]: {
+                    ...prev[normalizedData.device_id || normalizedData.id],
+                    ...normalizedData
                 },
               }));
             } else if (data.type === 'discovery') {
