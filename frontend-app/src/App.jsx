@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import MapView from './components/MapView.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
+import FormationScheduler from './components/FormationScheduler.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import AdminDashboard from './components/AdminDashboard.jsx';
 import DroneManagement from './components/DroneManagement.jsx';
@@ -9,13 +10,19 @@ import ProfilePage from './components/ProfilePage.jsx';
 import DiscoveryTab from './components/DiscoveryTab.jsx';
 import { useDroneSocket } from './hooks/useDroneSocket.js';
 import { AuthProvider, useAuth } from './hooks/AuthContext.jsx';
-import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar } from 'lucide-react';
+import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar, ClipboardList } from 'lucide-react';
 
 function Dashboard() {
   const { drones, discoveredDrones, setDiscoveredDrones, sendCommand, isConnected } = useDroneSocket();
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const [isAdminPanel, setIsAdminPanel] = useState(() => localStorage.getItem('isAdminPanel') === 'true');
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'map');
+
+  // Formation mode state
+  const [formationMode, setFormationMode] = useState(false);
+  const [selectedDrones, setSelectedDrones] = useState([]);
+  const [ghostPositions, setGhostPositions] = useState([]);
+  const [showLabels, setShowLabels] = useState(true);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -28,6 +35,60 @@ function Dashboard() {
         setIsAdminPanel(true);
     }
   }, [user]);
+
+  // Toggle chọn drone
+  const handleDroneSelect = useCallback((droneId) => {
+    setSelectedDrones(prev =>
+      prev.includes(droneId)
+        ? prev.filter(id => id !== droneId)
+        : [...prev, droneId]
+    );
+  }, []);
+
+  // Hủy formation mode
+  const handleCancelFormation = useCallback(() => {
+    setFormationMode(false);
+    setSelectedDrones([]);
+    setGhostPositions([]);
+  }, []);
+
+  // Thực thi gửi lệnh GOTO hàng loạt
+  const handleExecuteFormation = useCallback(async (positions) => {
+    const t0 = performance.now();
+    console.log(`⏱️ [FORMATION] Click Thực thi lúc ${new Date().toISOString()} — ${positions.length} drones`);
+
+    const hostname = window.location.hostname;
+    const targets = positions.map(p => ({
+      drone_id: p.droneId,
+      lat: p.targetLat,
+      lng: p.targetLng,
+    }));
+
+    try {
+      const tFetch = performance.now();
+      console.log(`⏱️ [FORMATION] Bắt đầu gọi API sau ${(tFetch - t0).toFixed(0)}ms`);
+
+      const res = await fetch(`http://${hostname}:8000/api/drones/formation/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ targets }),
+      });
+      const data = await res.json();
+
+      const tDone = performance.now();
+      console.log(`✅ [FORMATION] Backend phản hồi sau ${(tDone - tFetch).toFixed(0)}ms (tổng: ${(tDone - t0).toFixed(0)}ms)`, data);
+
+      // Thoát formation mode sau khi gửi thành công
+      handleCancelFormation();
+    } catch (err) {
+      const tErr = performance.now();
+      console.error(`❌ [FORMATION] Lỗi sau ${(tErr - t0).toFixed(0)}ms:`, err);
+      alert('Lỗi gửi lệnh đội hình: ' + err.message);
+    }
+  }, [token, handleCancelFormation]);
 
   return (
     <div className="relative w-screen h-screen bg-slate-950 overflow-hidden flex font-sans text-slate-200">
@@ -99,8 +160,53 @@ function Dashboard() {
             <>
                 {activeTab === 'map' && (
                     <>
-                        <MapView drones={drones} />
-                        <ControlPanel drones={drones} onCommand={sendCommand} isConnected={isConnected} />
+                        <MapView
+                          drones={drones}
+                          selectionMode={formationMode}
+                          selectedDrones={selectedDrones}
+                          onDroneSelect={handleDroneSelect}
+                          ghostPositions={ghostPositions}
+                          showLabels={showLabels}
+                        />
+
+                        {/* Map View Controls: Nút Lên lịch và Ẩn/Hiện tên */}
+                        <div className="absolute top-4 left-4 z-20 flex gap-4">
+                          {!formationMode && (
+                            <button
+                              onClick={() => setFormationMode(true)}
+                              className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800/90 text-white rounded-xl border border-white/10 shadow-lg transition-all hover:shadow-xl hover:border-white/20 text-sm font-medium"
+                            >
+                              <ClipboardList size={18} className="text-blue-400" />
+                              Lên lịch
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setShowLabels(!showLabels)}
+                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border backdrop-blur-md transition-all shadow-lg ${
+                              showLabels 
+                                ? 'bg-blue-600/90 text-white border-blue-500 shadow-blue-900/20' 
+                                : 'bg-slate-900/80 text-slate-400 border-white/5 hover:bg-slate-800/90 hover:text-slate-200'
+                            }`}
+                            title="Bật/Tắt nhãn tên drone trên bản đồ"
+                          >
+                            <span className={`w-2 h-2 rounded-full ${showLabels ? 'bg-white' : 'bg-slate-500'}`}></span>
+                            {showLabels ? 'Đang hiện tên' : 'Đã ẩn tên'}
+                          </button>
+                        </div>
+
+                        {/* Formation Scheduler (thay ControlPanel khi bật) */}
+                        {formationMode ? (
+                          <FormationScheduler
+                            drones={drones}
+                            selectedDrones={selectedDrones}
+                            onDroneSelect={handleDroneSelect}
+                            onCancel={handleCancelFormation}
+                            onGhostPositions={setGhostPositions}
+                            onExecute={handleExecuteFormation}
+                          />
+                        ) : (
+                          <ControlPanel drones={drones} onCommand={sendCommand} isConnected={isConnected} />
+                        )}
                     </>
                 )}
                 {activeTab === 'discovery' && <DiscoveryTab discoveredDrones={discoveredDrones} setDiscoveredDrones={setDiscoveredDrones} />}

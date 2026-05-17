@@ -20,48 +20,68 @@ def on_connect(client, userdata, flags, rc):
     print(f"Connected to MQTT Broker with result code {rc}")
     client.subscribe(MQTT_TOPIC)
 
+# Global cache để tránh query DB 120 lần/giây
+drone_cache = {}
+
 def on_message(client, userdata, msg):
-    print(f"🔔 [MQTT DEBUG] Nhận gói tin trên Topic: {msg.topic}")
     try:
         data = json.loads(msg.payload.decode())
-        # Hỗ trợ cả tên trường cũ và mới
         device_id = data.get("device_id") or data.get("id")
         if not device_id:
-            print("[MQTT] Nhận dữ liệu không có ID")
             return
 
-        print(f"Received telemetry from {device_id}")
-
-        # 1. Update or Create Drone Status
+        # 1. Update or Create Drone Status (Sử dụng Cache RAM)
         state = data.get("state") or "UNKNOWN"
         is_active = (state != "OFFLINE")
         
-        drone, created = Drone.objects.get_or_create(
-            device_id=device_id,
-            defaults={'name': f"Drone {device_id[:6]}"}
-        )
-        drone.is_active = is_active
-        drone.state = state
-        drone.save()
+        drone = drone_cache.get(device_id)
+        if not drone:
+            drone, created = Drone.objects.get_or_create(
+                device_id=device_id,
+                defaults={'name': f"Drone {device_id[:6]}"}
+            )
+            drone_cache[device_id] = drone
 
-        print(f"📡 [STATE CHANGE] {device_id} is now {'ONLINE' if is_active else 'OFFLINE'} (State: {state})")
+        # Chỉ ghi DB nếu trạng thái có sự thay đổi thực sự
+        if drone.is_active != is_active or drone.state != state:
+            drone.is_active = is_active
+            drone.state = state
+            drone.save()
+            print(f"📡 [STATE CHANGE] {device_id} is now {'ONLINE' if is_active else 'OFFLINE'} (State: {state})")
 
-        # 2. Save Telemetry Log to Database
-        # Lấy pin cũ từ TelemetryLog nếu bản tin không có pin (để tránh về 0% khi Offline)
-        current_battery = data.get("battery")
-        if current_battery is None:
-            # Tìm bản ghi gần nhất có pin > 0 để tránh lấy lại số 0 của các lần offline trước
-            last_log = TelemetryLog.objects.filter(drone=drone, battery__gt=0).order_by('-timestamp').first()
-            current_battery = last_log.battery if last_log else 0
-            
-        log = TelemetryLog.objects.create(
-            drone=drone,
-            latitude=data.get("latitude") or data.get("lat") or 0,
-            longitude=data.get("longitude") or data.get("lng") or 0,
-            altitude=data.get("altitude") or data.get("alt") or 0,
-            battery=current_battery,
-            state=state
-        )
+        # Throttle DB Writes (Chỉ ghi DB 1 giây/lần mỗi drone để tránh SQLite lock)
+        import time
+        current_time = time.time()
+        last_log_time = getattr(drone, '_last_db_write', 0)
+        
+        if current_time - last_log_time >= 1.0:
+            # Lấy pin cũ từ TelemetryLog nếu bản tin không có pin
+            current_battery = data.get("battery")
+            if current_battery is None:
+                last_log = TelemetryLog.objects.filter(drone=drone, battery__gt=0).order_by('-timestamp').first()
+                current_battery = last_log.battery if last_log else 0
+                
+            log = TelemetryLog.objects.create(
+                drone=drone,
+                latitude=data.get("latitude") or data.get("lat") or 0,
+                longitude=data.get("longitude") or data.get("lng") or 0,
+                altitude=data.get("altitude") or data.get("alt") or 0,
+                battery=current_battery,
+                state=state
+            )
+            drone._last_db_write = current_time
+        else:
+            # Fake log object for WebSocket broadcast
+            class FakeLog:
+                pass
+            log = FakeLog()
+            log.latitude = data.get("latitude") or data.get("lat") or 0
+            log.longitude = data.get("longitude") or data.get("lng") or 0
+            log.altitude = data.get("altitude") or data.get("alt") or 0
+            log.battery = data.get("battery") or 0
+            log.state = state
+            from django.utils import timezone
+            log.timestamp = timezone.now()
 
         # 3. Broadcast to WebSockets (Django Channels)
         channel_layer = get_channel_layer()

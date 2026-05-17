@@ -1,6 +1,6 @@
 import json
 import os
-import paho.mqtt.publish as publish
+from .mqtt_service import get_mqtt_service
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db.models import Q
@@ -110,24 +110,79 @@ class DroneViewSet(viewsets.ModelViewSet):
 
         topic = f"drone/{drone_id}/command"
         try:
-            import paho.mqtt.publish as publish
-            import json
-            import os
-            
             payload = json.dumps({
                 "type": command_type,
                 "params": request.data.get('params', {})
             })
             
-            publish.single(
-                topic,
-                payload=payload,
-                hostname=os.getenv("MQTT_HOST", "localhost"),
-                port=1883
-            )
+            get_mqtt_service().publish(topic, payload)
             return Response({"status": "Command sent", "topic": topic})
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
+    @action(detail=False, methods=['post'])
+    def formation(self, request):
+        """
+        Nhận danh sách drone + tọa độ đích đã tính sẵn từ Frontend.
+        Body: { "targets": [{ "drone_id": "abc", "lat": 20.98, "lng": 105.79 }, ...] }
+        Gửi lệnh GOTO hàng loạt xuống MQTT (batch trong 1 connection duy nhất).
+        """
+        import time as _time
+        t0 = _time.time()
+        print(f"\n⏱️ [FORMATION API] === Nhận request formation lúc {_time.strftime('%H:%M:%S')} ===")
+
+        targets = request.data.get('targets', [])
+        if not targets:
+            return Response({"error": "No targets provided"}, status=400)
+
+        errors = []
+        mqtt_messages = []  # Thu thập tất cả messages trước, gửi 1 lần
+
+        # Bước 1: Validate tất cả drone & chuẩn bị messages
+        t_db = _time.time()
+        drone_ids = [t.get('drone_id') for t in targets]
+        drones_map = {d.device_id: d for d in Drone.objects.filter(device_id__in=drone_ids)}
+        t_db_done = _time.time()
+        print(f"⏱️ [FORMATION API] DB query {len(drone_ids)} drones: {(t_db_done - t_db)*1000:.1f}ms")
+
+        for t in targets:
+            drone_id = t.get('drone_id')
+            drone = drones_map.get(drone_id)
+
+            if not drone:
+                errors.append(f"{drone_id}: not found")
+                continue
+            if not request.user.is_staff and drone.owner != request.user:
+                errors.append(f"{drone_id}: not owned by you")
+                continue
+
+            mqtt_messages.append({
+                'topic': f"drone/{drone_id}/command",
+                'payload': json.dumps({
+                    "type": "GOTO",
+                    "params": {"lat": t["lat"], "lng": t["lng"]}
+                }),
+            })
+
+        # Bước 2: Gửi tất cả lệnh trong 1 kết nối MQTT duy nhất
+        sent = 0
+        if mqtt_messages:
+            try:
+                t_mqtt = _time.time()
+                get_mqtt_service().publish_batch(mqtt_messages)
+                t_mqtt_done = _time.time()
+                sent = len(mqtt_messages)
+                print(f"⏱️ [FORMATION API] MQTT publish_batch {sent} messages: {(t_mqtt_done - t_mqtt)*1000:.1f}ms")
+            except Exception as e:
+                errors.append(f"MQTT batch error: {str(e)}")
+
+        t_total = _time.time()
+        print(f"⏱️ [FORMATION API] === Tổng xử lý: {(t_total - t0)*1000:.1f}ms (DB: {(t_db_done - t_db)*1000:.1f}ms) ===\n")
+
+        result = {"status": f"Formation sent to {sent} drones"}
+        if errors:
+            result["errors"] = errors
+        return Response(result)
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -190,9 +245,13 @@ class DroneClusterViewSet(viewsets.ModelViewSet):
         cmd_type = request.data.get('type')
         params = request.data.get('params', {})
         
+        messages = []
         for drone in cluster.drones.all():
-            topic = f"drone/{drone.device_id}/command"
-            payload = json.dumps({"type": cmd_type, "params": params})
-            publish.single(topic, payload, hostname=os.getenv('MQTT_HOST', 'localhost'))
+            messages.append({
+                'topic': f"drone/{drone.device_id}/command",
+                'payload': json.dumps({"type": cmd_type, "params": params}),
+            })
+        if messages:
+            get_mqtt_service().publish_batch(messages)
             
         return Response({"status": f"Command {cmd_type} sent to cluster {cluster.name}"})
