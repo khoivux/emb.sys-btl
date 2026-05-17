@@ -3,3 +3,9 @@ import gc
 import esp
 esp.osdebug(None)
 gc.collect()
+
+import wifimanager
+config = wifimanager.setup_connection()
+
+MQTT_SERVER = config["mqtt_server"]
+MQTT_PORT = config["mqtt_port"]
