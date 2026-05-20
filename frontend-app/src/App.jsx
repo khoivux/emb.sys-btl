@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import MapView from './components/MapView.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
 import FormationScheduler from './components/FormationScheduler.jsx';
+import MissionScheduler from './components/MissionScheduler.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import AdminDashboard from './components/AdminDashboard.jsx';
 import DroneManagement from './components/DroneManagement.jsx';
@@ -10,7 +11,7 @@ import ProfilePage from './components/ProfilePage.jsx';
 import DiscoveryTab from './components/DiscoveryTab.jsx';
 import { useDroneSocket } from './hooks/useDroneSocket.js';
 import { AuthProvider, useAuth } from './hooks/AuthContext.jsx';
-import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar, ClipboardList } from 'lucide-react';
+import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar, ClipboardList, CalendarClock } from 'lucide-react';
 
 function Dashboard() {
   const { drones, discoveredDrones, setDiscoveredDrones, sendCommand, isConnected } = useDroneSocket();
@@ -24,6 +25,10 @@ function Dashboard() {
   const [ghostPositions, setGhostPositions] = useState([]);
   const [showLabels, setShowLabels] = useState(true);
   const [targetCenter, setTargetCenter] = useState(null);
+
+  // Mission Scheduler mode
+  const [missionSchedulerOpen, setMissionSchedulerOpen] = useState(false);
+  const [missionClickEvent, setMissionClickEvent] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -172,19 +177,29 @@ function Dashboard() {
                           targetCenter={targetCenter}
                           onMapClick={(latlng) => {
                             if (formationMode) setTargetCenter(latlng);
+                            if (missionSchedulerOpen) setMissionClickEvent({ lat: latlng.lat, lng: latlng.lng, ts: Date.now() });
                           }}
                         />
 
-                        {/* Map View Controls: Nút Lên lịch và Ẩn/Hiện tên */}
+                        {/* Map View Controls: Nút Lên lịch, Đặt lịch bay, Ẩn/Hiện tên */}
                         <div className="absolute top-4 left-4 z-20 flex gap-4">
-                          {!formationMode && (
-                            <button
-                              onClick={() => setFormationMode(true)}
-                              className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800/90 text-white rounded-xl border border-white/10 shadow-lg transition-all hover:shadow-xl hover:border-white/20 text-sm font-medium"
-                            >
-                              <ClipboardList size={18} className="text-blue-400" />
-                              Lên lịch
-                            </button>
+                          {!formationMode && !missionSchedulerOpen && (
+                            <>
+                              <button
+                                onClick={() => setFormationMode(true)}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800/90 text-white rounded-xl border border-white/10 shadow-lg transition-all hover:shadow-xl hover:border-white/20 text-sm font-medium"
+                              >
+                                <ClipboardList size={18} className="text-blue-400" />
+                                Lên lịch
+                              </button>
+                              <button
+                                onClick={() => setMissionSchedulerOpen(true)}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800/90 text-white rounded-xl border border-white/10 shadow-lg transition-all hover:shadow-xl hover:border-white/20 text-sm font-medium"
+                              >
+                                <CalendarClock size={18} className="text-purple-400" />
+                                Đặt Lịch Bay
+                              </button>
+                            </>
                           )}
                           <button
                             onClick={() => setShowLabels(!showLabels)}
@@ -213,6 +228,20 @@ function Dashboard() {
                           />
                         ) : (
                           <ControlPanel drones={drones} onCommand={sendCommand} isConnected={isConnected} />
+                        )}
+
+                        {/* Mission Scheduler độc lập */}
+                        {missionSchedulerOpen && !formationMode && (
+                          <MissionScheduler
+                            drones={drones}
+                            token={token}
+                            onClose={() => {
+                              setGhostPositions([]);
+                              setMissionSchedulerOpen(false);
+                            }}
+                            mapClickEvent={missionClickEvent}
+                            onGhostPositions={setGhostPositions}
+                          />
                         )}
                     </>
                 )}

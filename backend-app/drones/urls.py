@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import DroneViewSet, TelemetryLogViewSet, RegisterView, UserViewSet, MyTokenObtainPairView, DroneClusterViewSet
+from .views import DroneViewSet, TelemetryLogViewSet, RegisterView, UserViewSet, MyTokenObtainPairView, DroneClusterViewSet, ScheduledMissionViewSet
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -11,6 +11,7 @@ router.register(r'drones', DroneViewSet)
 router.register(r'telemetry', TelemetryLogViewSet)
 router.register(r'users', UserViewSet)
 router.register(r'clusters', DroneClusterViewSet, basename='clusters')
+router.register(r'scheduled_missions', ScheduledMissionViewSet, basename='scheduled_missions')
 
 urlpatterns = [
     path('', include(router.urls)),

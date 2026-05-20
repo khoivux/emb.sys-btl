@@ -41,3 +41,25 @@ class TelemetryLog(models.Model):
 
     def __str__(self):
         return f"{self.drone.device_id} at {self.timestamp}"
+
+
+class ScheduledMission(models.Model):
+    """Lưu trữ một lịch bay độc lập cho một hoặc nhiều drone."""
+    STATUS_CHOICES = [
+        ('PENDING', 'Đang chờ'),
+        ('EXECUTED', 'Đã thực thi'),
+        ('FAILED', 'Thất bại'),
+        ('CANCELLED', 'Đã huỷ'),
+    ]
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scheduled_missions', null=True, blank=True)
+    # targets_json: [{"drone_id": "drone1", "lat": 20.98, "lng": 105.79}, ...]
+    targets_json = models.JSONField()
+    execute_at = models.DateTimeField()
+    status = models.CharField(max_length=20, default='PENDING', choices=STATUS_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Mission #{self.id} lúc {self.execute_at:%H:%M %d/%m/%Y} ({self.status})"

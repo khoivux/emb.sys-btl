@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Drone, TelemetryLog, DroneCluster
+from .models import Drone, TelemetryLog, DroneCluster, ScheduledMission
 from django.contrib.auth.models import User
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -34,3 +34,9 @@ class TelemetryLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = TelemetryLog
         fields = '__all__'
+
+class ScheduledMissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ScheduledMission
+        fields = ['id', 'targets_json', 'execute_at', 'status', 'created_at']
+        read_only_fields = ['id', 'status', 'created_at']

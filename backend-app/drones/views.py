@@ -9,9 +9,9 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Drone, TelemetryLog, DroneCluster
+from .models import Drone, TelemetryLog, DroneCluster, ScheduledMission
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import DroneSerializer, TelemetryLogSerializer, UserSerializer, MyTokenObtainPairSerializer, DroneClusterSerializer
+from .serializers import DroneSerializer, TelemetryLogSerializer, UserSerializer, MyTokenObtainPairSerializer, DroneClusterSerializer, ScheduledMissionSerializer
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
@@ -255,3 +255,74 @@ class DroneClusterViewSet(viewsets.ModelViewSet):
             get_mqtt_service().publish_batch(messages)
             
         return Response({"status": f"Command {cmd_type} sent to cluster {cluster.name}"})
+
+
+class ScheduledMissionViewSet(viewsets.ModelViewSet):
+    """
+    API để tạo và quản lý Lịch Bay độc lập.
+    POST /api/drones/scheduled_missions/   → Tạo lịch bay mới
+    GET  /api/drones/scheduled_missions/   → Danh sách lịch bay của user
+    POST /api/drones/scheduled_missions/{id}/cancel/ → Huỷ một lịch
+    """
+    serializer_class = ScheduledMissionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete']
+
+    def get_queryset(self):
+        return ScheduledMission.objects.filter(owner=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        from django.utils.dateparse import parse_datetime
+        from .scheduler import scheduler, execute_scheduled_mission
+
+        targets = request.data.get('targets', [])
+        execute_at_str = request.data.get('execute_at')
+
+        if not targets:
+            return Response({"error": "Vui lòng cung cấp ít nhất 1 mục tiêu."}, status=400)
+        if not execute_at_str:
+            return Response({"error": "Vui lòng cung cấp thời gian thực thi (execute_at)."}, status=400)
+
+        execute_at = parse_datetime(execute_at_str)
+        if not execute_at:
+            return Response({"error": "Định dạng execute_at không hợp lệ. Dùng ISO-8601."}, status=400)
+
+        from django.utils import timezone
+        if execute_at <= timezone.now():
+            return Response({"error": "Thời gian hẹn phải ở trong tương lai."}, status=400)
+
+        mission = ScheduledMission.objects.create(
+            owner=request.user,
+            targets_json=targets,
+            execute_at=execute_at,
+        )
+
+        # Đẩy job vào APScheduler
+        scheduler.add_job(
+            execute_scheduled_mission,
+            trigger='date',
+            run_date=execute_at,
+            args=[mission.id],
+            id=f"mission_{mission.id}",
+            replace_existing=True,
+        )
+
+        serializer = self.get_serializer(mission)
+        return Response(serializer.data, status=201)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Huỷ một lịch bay đang chờ."""
+        from .scheduler import scheduler
+        mission = self.get_object()
+        if mission.status != 'PENDING':
+            return Response({"error": f"Không thể huỷ lịch bay ở trạng thái '{mission.status}'."}, status=400)
+        
+        # Xoá job khỏi scheduler nếu còn tồn tại
+        job_id = f"mission_{mission.id}"
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+
+        mission.status = 'CANCELLED'
+        mission.save()
+        return Response({"status": f"Đã huỷ lịch bay #{mission.id}."})
