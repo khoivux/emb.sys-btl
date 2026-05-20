@@ -13,8 +13,8 @@ import { AuthProvider, useAuth } from './hooks/AuthContext.jsx';
 import { Settings, LogOut, Map as MapIcon, Box, Users, User as UserIcon, Radar, ClipboardList } from 'lucide-react';
 
 function Dashboard() {
-  const { drones, discoveredDrones, setDiscoveredDrones, sendCommand, isConnected } = useDroneSocket();
   const { user, token, logout } = useAuth();
+  const { drones, discoveredDrones, setDiscoveredDrones, sendCommand, sendCommandWS, isConnected } = useDroneSocket({ onUnauthorized: logout });
   const [isAdminPanel, setIsAdminPanel] = useState(() => localStorage.getItem('isAdminPanel') === 'true');
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem('activeTab') || 'map');
 
@@ -214,6 +214,7 @@ function Dashboard() {
                               key={focusedDroneId}
                               drone={drones[focusedDroneId]}
                               onCommand={sendCommand}
+                              onCommandWS={sendCommandWS}
                               onClose={() => setFocusedDroneId(null)}
                             />
                           ) : null

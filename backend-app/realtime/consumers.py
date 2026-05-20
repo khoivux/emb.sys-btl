@@ -8,6 +8,11 @@ class DroneConsumer(AsyncWebsocketConsumer):
         self.room_group_name = "drone_updates"
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+        
+        # Khởi tạo cache xác thực để tránh truy vấn DB ở tần suất cao (20Hz)
+        self.cached_token = None
+        self.authenticated_user = None
+        self.authorized_drones = set()
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
@@ -21,23 +26,36 @@ class DroneConsumer(AsyncWebsocketConsumer):
             if data.get("type") != "command":
                 return
 
-            # Xác thực JWT nhanh (async)
             token = data.get("token")
-            user = await self._get_user_from_token(token)
-            if user is None:
+            if not token:
                 await self.send(text_data=json.dumps({"error": "unauthorized"}))
                 return
+
+            # 1. Xác thực Token nhanh từ Cache (tránh query database User)
+            if token != self.cached_token:
+                user = await self._get_user_from_token(token)
+                if user is None:
+                    await self.send(text_data=json.dumps({"error": "unauthorized"}))
+                    return
+                self.cached_token = token
+                self.authenticated_user = user
+                self.authorized_drones = set() # Reset cache drone khi đổi user
+            else:
+                user = self.authenticated_user
 
             drone_id  = data.get("drone_id")
             cmd_type  = data.get("cmd")
             params    = data.get("params", {})
 
-            # Kiểm tra ownership trong thread pool
-            allowed = await self._check_ownership(user, drone_id)
-            if not allowed:
-                return
+            # 2. Xác thực quyền sở hữu Drone từ Cache (tránh query database Drone)
+            if drone_id not in self.authorized_drones:
+                allowed = await self._check_ownership(user, drone_id)
+                if not allowed:
+                    await self.send(text_data=json.dumps({"error": "forbidden"}))
+                    return
+                self.authorized_drones.add(drone_id)
 
-            # Publish MQTT QoS 0 (fire-and-forget) — nhanh nhất có thể
+            # Publish MQTT QoS 0 (fire-and-forget) — cực nhanh
             topic   = f"drone/{drone_id}/command"
             payload = json.dumps({"type": cmd_type, "params": params})
             await self._mqtt_publish(topic, payload)

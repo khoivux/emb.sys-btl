@@ -1,56 +1,85 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { PlaneTakeoff, PlaneLanding, Home, AlertOctagon, Navigation, ArrowUpCircle, ArrowDownCircle, RotateCcw, RotateCw, X } from 'lucide-react';
 
-const ControlPanel = ({ drone, onCommand, onClose }) => {
-  const activeKeys = React.useRef(new Set());
-  const intervalRef = React.useRef(null);
+const KEY_MAP = {
+  arrowup: { cmd: 'MOVE', params: { direction: 'FORWARD' } },
+  arrowdown: { cmd: 'MOVE', params: { direction: 'BACKWARD' } },
+  arrowleft: { cmd: 'MOVE', params: { direction: 'LEFT' } },
+  arrowright: { cmd: 'MOVE', params: { direction: 'RIGHT' } },
+  w: { cmd: 'MOVE', params: { direction: 'FORWARD' } },
+  s: { cmd: 'MOVE', params: { direction: 'BACKWARD' } },
+  a: { cmd: 'MOVE', params: { direction: 'LEFT' } },
+  d: { cmd: 'MOVE', params: { direction: 'RIGHT' } },
+  q: { cmd: 'YAW_LEFT', params: {} },
+  e: { cmd: 'YAW_RIGHT', params: {} },
+  shift: { cmd: 'CLIMB', params: {} },
+  ' ': { cmd: 'DESCEND', params: {} },
+};
 
-  // Controller Loop: Sends commands while keys are held down
+// ControlPanel nhận 2 hàm gửi lệnh:
+//   onCommandWS  — WebSocket, ~1ms  → dùng cho movement real-time
+//   onCommand    — HTTP,       ~50ms → dùng cho lệnh quan trọng (TAKEOFF/LAND/...)
+const ControlPanel = ({ drone, onCommand, onCommandWS, onClose }) => {
+  const activeKeys = useRef(new Set());
+  const intervalRef = useRef(null);
+  const targetIdRef = useRef(null);
+
+  // Cập nhật targetId khi drone thay đổi
   useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      if (!drone || activeKeys.current.size === 0) return;
-      const targetId = drone.id || drone.device_id;
-      
-      const keyMap = {
-          'arrowup': 'FORWARD', 'arrowdown': 'BACKWARD', 'arrowleft': 'LEFT', 'arrowright': 'RIGHT',
-          'w': 'FORWARD', 's': 'BACKWARD', 'a': 'LEFT', 'd': 'RIGHT',
-          'q': 'YAW_LEFT', 'e': 'YAW_RIGHT',
-          'shift': 'CLIMB', ' ': 'DESCEND'
-      };
+    targetIdRef.current = drone?.device_id || drone?.id;
+  }, [drone]);
 
-      activeKeys.current.forEach(key => {
-        const cmd = keyMap[key];
-        if (cmd) {
-            const isMove = ['FORWARD', 'BACKWARD', 'LEFT', 'RIGHT'].includes(cmd);
-            if (isMove) onCommand(targetId, 'MOVE', { direction: cmd });
-            else onCommand(targetId, cmd, {});
-        }
-      });
-    }, 100); // 10Hz command stream
+  // Hàm gửi movement — ưu tiên WS, fallback HTTP
+  const sendMove = useCallback((cmd, params = {}) => {
+    const id = targetIdRef.current;
+    if (!id) return;
+    if (onCommandWS) onCommandWS(id, cmd, params);
+    else onCommand(id, cmd, params);
+  }, [onCommand, onCommandWS]);
 
-    return () => clearInterval(intervalRef.current);
-  }, [drone, onCommand]);
-
+  // --- Keyboard listener ---
   useEffect(() => {
     const handleKeyDown = (e) => {
-        activeKeys.current.add(e.key.toLowerCase());
+      const key = e.key.toLowerCase();
+      if (!KEY_MAP[key]) return;
+
+      // Gửi lệnh ngay lập tức khi nhấn phím (không đợi interval)
+      if (!activeKeys.current.has(key)) {
+        const { cmd, params } = KEY_MAP[key];
+        sendMove(cmd, params);
+      }
+      activeKeys.current.add(key);
     };
+
     const handleKeyUp = (e) => {
-        activeKeys.current.delete(e.key.toLowerCase());
+      activeKeys.current.delete(e.key.toLowerCase());
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [sendMove]);
+
+  // --- Command loop 20Hz (khi phím vẫn được giữ) ---
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      if (activeKeys.current.size === 0) return;
+      activeKeys.current.forEach(key => {
+        const mapping = KEY_MAP[key];
+        if (mapping) sendMove(mapping.cmd, mapping.params);
+      });
+    }, 50); // 20Hz
+
+    return () => clearInterval(intervalRef.current);
+  }, [sendMove]);
 
   if (!drone) return null;
 
-  const targetId = drone.id || drone.device_id;
-  const droneAlt = drone.alt !== undefined ? drone.alt : (drone.altitude !== undefined ? drone.altitude : 0);
+  const targetId = drone.device_id || drone.id;
+  const droneAlt = drone.alt ?? drone.altitude ?? 0;
 
   return (
     <div
@@ -63,11 +92,11 @@ const ControlPanel = ({ drone, onCommand, onClose }) => {
           to   { opacity: 1; transform: translateX(0); }
         }
       `}</style>
+
       {/* Telemetry Card */}
       <div className="p-4 bg-slate-900/80 backdrop-blur-md rounded-2xl text-white shadow-2xl border border-slate-700/50 relative">
-        {/* Close Button */}
         {onClose && (
-          <button 
+          <button
             onClick={onClose}
             className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
             title="Đóng bảng điều khiển"
@@ -101,93 +130,93 @@ const ControlPanel = ({ drone, onCommand, onClose }) => {
             <span className="text-xs text-slate-400">Trạng thái</span>
           </div>
         </div>
+
+        {/* WS indicator */}
+        <div className="mt-3 flex items-center gap-1.5">
+          <div className={`w-1.5 h-1.5 rounded-full ${onCommandWS ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+          <span className="text-[9px] text-slate-500">
+            {onCommandWS ? 'WebSocket (low-latency)' : 'HTTP fallback'}
+          </span>
+        </div>
       </div>
 
-      {/* Control Buttons */}
+      {/* Action Buttons — HTTP (đảm bảo tới nơi) */}
       <div className="p-4 bg-slate-900/80 backdrop-blur-md rounded-2xl text-white shadow-2xl border border-slate-700/50 grid grid-cols-2 gap-2">
-        <button 
-          onClick={() => {
-            console.log("Button Clicked: TAKEOFF", targetId);
-            onCommand(targetId, 'TAKEOFF');
-          }}
-          className="flex items-center justify-center gap-2 p-3 bg-blue-600 hover:bg-blue-500 rounded-xl transition-all"
+        <button
+          onClick={() => onCommand(targetId, 'TAKEOFF')}
+          className="flex items-center justify-center gap-2 p-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-xl transition-all"
         >
           <PlaneTakeoff size={20} /> Cất cánh
         </button>
-        <button 
-          onClick={() => {
-            console.log("Button Clicked: LAND", targetId);
-            onCommand(targetId, 'LAND');
-          }}
-          className="flex items-center justify-center gap-2 p-3 bg-orange-600 hover:bg-orange-500 rounded-xl transition-all"
+        <button
+          onClick={() => onCommand(targetId, 'LAND')}
+          className="flex items-center justify-center gap-2 p-3 bg-orange-600 hover:bg-orange-500 active:scale-95 rounded-xl transition-all"
         >
           <PlaneLanding size={20} /> Hạ cánh
         </button>
-        <button 
-          onClick={() => {
-            console.log("Button Clicked: RTH", targetId);
-            onCommand(targetId, 'RTH');
-          }}
-          className="flex items-center justify-center gap-2 p-3 bg-teal-600 hover:bg-teal-500 rounded-xl transition-all"
+        <button
+          onClick={() => onCommand(targetId, 'RTH')}
+          className="flex items-center justify-center gap-2 p-3 bg-teal-600 hover:bg-teal-500 active:scale-95 rounded-xl transition-all"
         >
           <Home size={20} /> RTH
         </button>
-        <button 
-          onClick={() => {
-            console.log("Button Clicked: EMERGENCY", targetId);
-            onCommand(targetId, 'EMERGENCY');
-          }}
-          className="flex items-center justify-center gap-2 p-3 bg-red-600 hover:bg-red-500 rounded-xl transition-all font-bold"
+        <button
+          onClick={() => onCommand(targetId, 'EMERGENCY')}
+          className="flex items-center justify-center gap-2 p-3 bg-red-600 hover:bg-red-500 active:scale-95 rounded-xl transition-all font-bold"
         >
           <AlertOctagon size={20} /> Dừng khẩn
         </button>
       </div>
 
-      {/* Manual Steering (D-Pad) */}
+      {/* D-Pad — WebSocket (real-time) */}
       <div className="p-4 bg-slate-900/80 backdrop-blur-md rounded-2xl text-white shadow-2xl border border-slate-700/50 flex flex-col items-center gap-2">
         <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Manual Steering</h3>
         <div className="flex items-center gap-6">
-            {/* Altitude Controls */}
-            <div className="flex flex-col gap-2">
-                <button onMouseDown={() => onCommand(targetId, 'CLIMB')} 
-                    className="w-10 h-10 bg-blue-500/20 hover:bg-blue-500/40 text-blue-400 rounded-lg flex items-center justify-center border border-blue-500/20 active:scale-95 transition-all">
-                    <ArrowUpCircle size={20} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'DESCEND')} 
-                    className="w-10 h-10 bg-orange-500/20 hover:bg-orange-500/40 text-orange-400 rounded-lg flex items-center justify-center border border-orange-500/20 active:scale-95 transition-all">
-                    <ArrowDownCircle size={20} />
-                </button>
-            </div>
+          {/* Altitude */}
+          <div className="flex flex-col gap-2">
+            <button
+              onMouseDown={() => sendMove('CLIMB')}
+              className="w-10 h-10 bg-blue-500/20 hover:bg-blue-500/40 text-blue-400 rounded-lg flex items-center justify-center border border-blue-500/20 active:scale-95 transition-all"
+            >
+              <ArrowUpCircle size={20} />
+            </button>
+            <button
+              onMouseDown={() => sendMove('DESCEND')}
+              className="w-10 h-10 bg-orange-500/20 hover:bg-orange-500/40 text-orange-400 rounded-lg flex items-center justify-center border border-orange-500/20 active:scale-95 transition-all"
+            >
+              <ArrowDownCircle size={20} />
+            </button>
+          </div>
 
-            {/* Directional Pad */}
-            <div className="grid grid-cols-3 gap-1">
-                <button onMouseDown={() => onCommand(targetId, 'YAW_LEFT')} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
-                    <RotateCcw size={16} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'MOVE', { direction: 'FORWARD' })} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
-                    <Navigation size={18} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'YAW_RIGHT')} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
-                    <RotateCw size={16} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'MOVE', { direction: 'LEFT' })} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all -rotate-90">
-                    <Navigation size={18} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'MOVE', { direction: 'BACKWARD' })} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-180">
-                    <Navigation size={18} />
-                </button>
-                <button onMouseDown={() => onCommand(targetId, 'MOVE', { direction: 'RIGHT' })} 
-                    className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-90">
-                    <Navigation size={18} />
-                </button>
-            </div>
+          {/* Directional Pad */}
+          <div className="grid grid-cols-3 gap-1">
+            <button onMouseDown={() => sendMove('YAW_LEFT')}
+              className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
+              <RotateCcw size={16} />
+            </button>
+            <button onMouseDown={() => sendMove('MOVE', { direction: 'FORWARD' })}
+              className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
+              <Navigation size={18} />
+            </button>
+            <button onMouseDown={() => sendMove('YAW_RIGHT')}
+              className="w-10 h-10 bg-slate-800 hover:bg-yellow-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all">
+              <RotateCw size={16} />
+            </button>
+            <button onMouseDown={() => sendMove('MOVE', { direction: 'LEFT' })}
+              className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all -rotate-90">
+              <Navigation size={18} />
+            </button>
+            <button onMouseDown={() => sendMove('MOVE', { direction: 'BACKWARD' })}
+              className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-180">
+              <Navigation size={18} />
+            </button>
+            <button onMouseDown={() => sendMove('MOVE', { direction: 'RIGHT' })}
+              className="w-10 h-10 bg-slate-800 hover:bg-blue-600 rounded-lg flex items-center justify-center border border-white/5 active:scale-95 transition-all rotate-90">
+              <Navigation size={18} />
+            </button>
+          </div>
         </div>
-        <p className="text-[9px] text-slate-500 mt-2">WASD Move | QE Rotate | Shift/Space Alt</p>
+        <p className="text-[9px] text-slate-500 mt-2">WASD/↑↓←→ Di chuyển | QE Xoay | Shift/Space Độ cao</p>
       </div>
     </div>
   );

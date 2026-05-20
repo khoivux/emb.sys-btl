@@ -130,12 +130,15 @@ class DroneViewSet(viewsets.ModelViewSet):
     def command(self, request):
         drone_id = request.data.get('drone_id')
         command_type = request.data.get('type')
+        print(f"\n📥 [DJANGO API] NHẬN LỆNH: ID={drone_id} | Type={command_type} | Params={request.data.get('params', {})}")
         
         try:
             drone = Drone.objects.get(device_id=drone_id)
             if not request.user.is_staff and drone.owner != request.user:
+                print(f"❌ [DJANGO API] TỪ CHỐI: User {request.user.username} không sở hữu drone này (Owner ID={drone.owner_id})!")
                 return Response({"error": "You do not own this drone"}, status=403)
         except Drone.DoesNotExist:
+            print(f"❌ [DJANGO API] KHÔNG TÌM THẤY: Drone với device_id={drone_id} không có trong DB!")
             return Response({"error": "Drone not found"}, status=404)
 
         topic = f"drone/{drone_id}/command"
@@ -144,10 +147,12 @@ class DroneViewSet(viewsets.ModelViewSet):
                 "type": command_type,
                 "params": request.data.get('params', {})
             })
-            
+            print(f"📡 [DJANGO API] Đang publish qua MQTT: Topic={topic} | Payload={payload}")
             get_mqtt_service().publish(topic, payload)
+            print("✅ [DJANGO API] Đã publish lên MQTT Broker thành công!\n")
             return Response({"status": "Command sent", "topic": topic})
         except Exception as e:
+            print(f"💥 [DJANGO API] LỖI khi publish MQTT: {e}\n")
             return Response({"error": str(e)}, status=500)
 
     @action(detail=False, methods=['post'])
