@@ -1,5 +1,5 @@
 import React from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -25,7 +25,19 @@ const ChangeMapView = ({ center }) => {
   return null;
 };
 
-const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSelect, ghostPositions = [], showLabels = true }) => {
+// Helper component to detect map background clicks
+const MapEvents = ({ onMapClick }) => {
+  useMapEvents({
+    click: () => {
+      if (onMapClick) {
+        onMapClick();
+      }
+    }
+  });
+  return null;
+};
+
+const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSelect, ghostPositions = [], showLabels = true, focusedDroneId = null, onDroneFocus, onMapClick }) => {
   const droneList = Object.values(drones);
   
   // Filter drones that actually have valid coordinates
@@ -34,10 +46,17 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
     typeof d.longitude === 'number' && !isNaN(d.longitude)
   );
 
-  // Default to PTIT if no drones with valid coordinates
-  const mapCenter = dronesWithCoords.length > 0 
-    ? [dronesWithCoords[0].latitude, dronesWithCoords[0].longitude] 
-    : [20.980812, 105.795931];
+  // If focused drone exists and is active, focus on it
+  const focusedDrone = focusedDroneId ? drones[focusedDroneId] : null;
+  const isFocusedDroneValid = focusedDrone && 
+    typeof focusedDrone.latitude === 'number' && !isNaN(focusedDrone.latitude) &&
+    typeof focusedDrone.longitude === 'number' && !isNaN(focusedDrone.longitude);
+
+  const mapCenter = isFocusedDroneValid
+    ? [focusedDrone.latitude, focusedDrone.longitude]
+    : (dronesWithCoords.length > 0 
+        ? [dronesWithCoords[0].latitude, dronesWithCoords[0].longitude] 
+        : [20.980812, 105.795931]);
 
   return (
     <div className="absolute inset-0 z-0 w-full h-full overflow-hidden">
@@ -50,6 +69,13 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
           100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
         }
         .drone-selected { animation: pulse-ring 1.5s infinite; border-radius: 50%; }
+
+        @keyframes focus-ring {
+          0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7); }
+          70% { box-shadow: 0 0 0 10px rgba(6, 182, 212, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+        }
+        .drone-focused { animation: focus-ring 1.5s infinite; border-radius: 50%; }
       `}</style>
       <MapContainer 
         center={mapCenter} 
@@ -60,6 +86,7 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
         style={{ width: '100%', height: '100%' }}
       >
         <ChangeMapView center={mapCenter} />
+        <MapEvents onMapClick={onMapClick} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
@@ -69,12 +96,25 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
         {droneList.map(drone => {
             const isOnline = drone.is_active;
             const isSelected = selectedDrones.includes(drone.device_id);
+            const isFocused = focusedDroneId === drone.device_id;
+            
             const strokeColor = selectionMode && isSelected 
               ? '#EAB308'  // vàng khi đã chọn
-              : (isOnline ? '#3B82F6' : '#64748b');
+              : (!selectionMode && isFocused
+                  ? '#06B6D4'  // màu cyan khi đang được focus
+                  : (isOnline ? '#3B82F6' : '#64748b'));
             const armColor = selectionMode && isSelected
               ? '#EAB308'
-              : (isOnline ? '#60A5FA' : '#475569');
+              : (!selectionMode && isFocused
+                  ? '#22D3EE'  // màu cyan sáng khi focus
+                  : (isOnline ? '#60A5FA' : '#475569'));
+            
+            let markerClass = 'drone-marker-custom';
+            if (selectionMode && isSelected) {
+              markerClass += ' drone-selected';
+            } else if (!selectionMode && isFocused) {
+              markerClass += ' drone-focused';
+            }
             
             // Skip rendering this marker if coordinates are invalid
             if (typeof drone.latitude !== 'number' || isNaN(drone.latitude) || 
@@ -87,7 +127,7 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
                     key={drone.device_id} 
                     position={[drone.latitude, drone.longitude]}
                     icon={L.divIcon({
-                        className: `drone-marker-custom ${selectionMode && isSelected ? 'drone-selected' : ''}`,
+                        className: markerClass,
                         html: `
                             <svg width="50" height="50" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <g style="transform-origin: center; transform: rotate(${drone.yaw || 0}deg); transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);">
@@ -103,19 +143,32 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
                         iconSize: [50, 50],
                         iconAnchor: [25, 25]
                     })}
-                    eventHandlers={selectionMode ? {
-                      click: (e) => {
-                        // Trong chế độ chọn drone, click → toggle chọn/bỏ chọn
-                        if (isOnline && onDroneSelect) {
-                          onDroneSelect(drone.device_id);
-                        }
-                        // Ngăn mở popup
-                        e.target.closePopup();
-                      }
-                    } : {}}
+                    eventHandlers={
+                      selectionMode 
+                        ? {
+                            click: (e) => {
+                              if (isOnline && onDroneSelect) {
+                                onDroneSelect(drone.device_id);
+                              }
+                              e.target.closePopup();
+                            }
+                          }
+                        : {
+                            click: (e) => {
+                              if (onDroneFocus) {
+                                // Toggle: click lại drone đang focus → bỏ focus
+                                onDroneFocus(isFocused ? null : drone.device_id);
+                              }
+                              e.target.closePopup();
+                              if (e.originalEvent) {
+                                e.originalEvent.stopPropagation();
+                              }
+                            }
+                          }
+                    }
                 >
-                    {/* Chỉ hiển thị popup khi KHÔNG ở chế độ chọn */}
-                    {!selectionMode && (
+                    {/* Chỉ hiển thị popup khi KHÔNG ở chế độ chọn và drone KHÔNG được focus */}
+                    {!selectionMode && !isFocused && (
                       <Popup>
                         <div className="p-1 min-w-[150px]">
                             <div className="flex items-center gap-2 mb-1">
@@ -144,9 +197,13 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
                           <span className={`text-[10px] font-bold px-1 rounded shadow-sm ${
                             selectionMode && isSelected
                               ? 'text-yellow-600 bg-yellow-50 ring-1 ring-yellow-400'
-                              : (isOnline ? 'text-blue-500 bg-white' : 'text-slate-400 bg-slate-100')
+                              : (!selectionMode && isFocused
+                                  ? 'text-cyan-400 bg-slate-900 border border-cyan-500/30 shadow-cyan-900/20'
+                                  : (isOnline ? 'text-blue-500 bg-white' : 'text-slate-400 bg-slate-100'))
                           }`}>
-                              {selectionMode && isSelected ? '✓ ' : ''}{drone.name}
+                              {selectionMode && isSelected ? '✓ ' : ''}
+                              {!selectionMode && isFocused ? '📡 ' : ''}
+                              {drone.name}
                           </span>
                       </Tooltip>
                     )}

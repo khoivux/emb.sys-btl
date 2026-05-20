@@ -23,6 +23,7 @@ function Dashboard() {
   const [selectedDrones, setSelectedDrones] = useState([]);
   const [ghostPositions, setGhostPositions] = useState([]);
   const [showLabels, setShowLabels] = useState(true);
+  const [focusedDroneId, setFocusedDroneId] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -167,13 +168,16 @@ function Dashboard() {
                           onDroneSelect={handleDroneSelect}
                           ghostPositions={ghostPositions}
                           showLabels={showLabels}
+                          focusedDroneId={focusedDroneId}
+                          onDroneFocus={setFocusedDroneId}
+                          onMapClick={() => setFocusedDroneId(null)}
                         />
 
                         {/* Map View Controls: Nút Lên lịch và Ẩn/Hiện tên */}
                         <div className="absolute top-4 left-4 z-20 flex gap-4">
                           {!formationMode && (
                             <button
-                              onClick={() => setFormationMode(true)}
+                              onClick={() => { setFormationMode(true); setFocusedDroneId(null); }}
                               className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800/90 text-white rounded-xl border border-white/10 shadow-lg transition-all hover:shadow-xl hover:border-white/20 text-sm font-medium"
                             >
                               <ClipboardList size={18} className="text-blue-400" />
@@ -205,7 +209,14 @@ function Dashboard() {
                             onExecute={handleExecuteFormation}
                           />
                         ) : (
-                          <ControlPanel drones={drones} onCommand={sendCommand} isConnected={isConnected} />
+                          focusedDroneId && drones[focusedDroneId] ? (
+                            <ControlPanel
+                              key={focusedDroneId}
+                              drone={drones[focusedDroneId]}
+                              onCommand={sendCommand}
+                              onClose={() => setFocusedDroneId(null)}
+                            />
+                          ) : null
                         )}
                     </>
                 )}
