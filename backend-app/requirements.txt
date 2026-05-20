@@ -7,3 +7,4 @@ django-cors-headers
 paho-mqtt
 asgiref
 djangorestframework-simplejwt
+zope.interface==6.3

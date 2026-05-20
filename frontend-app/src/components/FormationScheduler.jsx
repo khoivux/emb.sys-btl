@@ -9,7 +9,7 @@ import {
   getTextMinDrones,
 } from '../utils/FormationPatterns.js';
 
-const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, onGhostPositions, onExecute }) => {
+const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, onGhostPositions, onExecute, targetCenter }) => {
   const [step, setStep] = useState(1);
   const [selectedPattern, setSelectedPattern] = useState(null);
   const [patternConfig, setPatternConfig] = useState({});
@@ -78,21 +78,24 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
       ? validDrones.reduce((s, d) => s + d.longitude, 0) / validDrones.length
       : 105.795931;
 
+    const centerLat = targetCenter ? targetCenter.lat : avgLat;
+    const centerLng = targetCenter ? targetCenter.lng : avgLng;
+
     switch (selectedPattern) {
       case 'line':
-        return lineFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.direction || 'horizontal', patternConfig.spacing || 10);
+        return lineFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.direction || 'horizontal', patternConfig.spacing || 10);
       case 'circle':
-        return circleFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.radius || 20);
+        return circleFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.radius || 20);
       case 'grid':
-        return gridFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.columns || 3, patternConfig.spacing || 10);
+        return gridFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.columns || 3, patternConfig.spacing || 10);
       case 'text': {
-        const result = textFormation(selectedDroneObjects, patternConfig.text || 'A', avgLat, avgLng, patternConfig.scale || 5);
+        const result = textFormation(selectedDroneObjects, patternConfig.text || 'A', centerLat, centerLng, patternConfig.scale || 5);
         return result.positions;
       }
       default:
         return [];
     }
-  }, [step, selectedPattern, patternConfig, selectedDroneObjects]);
+  }, [step, selectedPattern, patternConfig, selectedDroneObjects, targetCenter]);
 
   // Sơ đồ mô phỏng trực quan các vị trí tương lai
   const visualPreviewSvg = useMemo(() => {
@@ -514,6 +517,13 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
 
             {/* Sơ đồ mô phỏng trực quan */}
             {visualPreviewSvg}
+
+            <div className="bg-blue-600/20 border border-blue-500/30 rounded-xl p-3 flex items-start gap-2 text-left mb-2">
+              <span className="text-blue-400 mt-0.5">ℹ️</span>
+              <p className="text-[10px] text-blue-200 m-0 leading-tight">
+                Bạn có thể <strong>click trên bản đồ</strong> để chọn vị trí trung tâm mới cho đội hình.
+              </p>
+            </div>
 
             {/* Danh sách vị trí đích */}
             <div className="space-y-1">

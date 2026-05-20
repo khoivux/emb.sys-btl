@@ -23,6 +23,7 @@ function Dashboard() {
   const [selectedDrones, setSelectedDrones] = useState([]);
   const [ghostPositions, setGhostPositions] = useState([]);
   const [showLabels, setShowLabels] = useState(true);
+  const [targetCenter, setTargetCenter] = useState(null);
 
   useEffect(() => {
     localStorage.setItem('activeTab', activeTab);
@@ -50,6 +51,7 @@ function Dashboard() {
     setFormationMode(false);
     setSelectedDrones([]);
     setGhostPositions([]);
+    setTargetCenter(null);
   }, []);
 
   // Thực thi gửi lệnh GOTO hàng loạt
@@ -167,6 +169,10 @@ function Dashboard() {
                           onDroneSelect={handleDroneSelect}
                           ghostPositions={ghostPositions}
                           showLabels={showLabels}
+                          targetCenter={targetCenter}
+                          onMapClick={(latlng) => {
+                            if (formationMode) setTargetCenter(latlng);
+                          }}
                         />
 
                         {/* Map View Controls: Nút Lên lịch và Ẩn/Hiện tên */}
@@ -203,6 +209,7 @@ function Dashboard() {
                             onCancel={handleCancelFormation}
                             onGhostPositions={setGhostPositions}
                             onExecute={handleExecuteFormation}
+                            targetCenter={targetCenter}
                           />
                         ) : (
                           <ControlPanel drones={drones} onCommand={sendCommand} isConnected={isConnected} />
