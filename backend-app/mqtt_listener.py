@@ -49,6 +49,24 @@ def on_message(client, userdata, msg):
             drone.save()
             print(f"📡 [STATE CHANGE] {device_id} is now {'ONLINE' if is_active else 'OFFLINE'} (State: {state})")
 
+        current_lat = data.get("latitude") or data.get("lat") or 0
+        current_lng = data.get("longitude") or data.get("lng") or 0
+        current_yaw = data.get("yaw") or 0
+        
+        last_lat = getattr(drone, '_last_lat', None)
+        last_lng = getattr(drone, '_last_lng', None)
+        last_yaw = getattr(drone, '_last_yaw', None)
+        
+        if last_lat is not None and last_lng is not None and last_yaw is not None:
+            if current_lat != last_lat or current_lng != last_lng:
+                print(f"📍 [MOVEMENT] Drone {device_id} di chuyển: ({last_lat:.7f}, {last_lng:.7f}) -> ({current_lat:.7f}, {current_lng:.7f})", flush=True)
+            elif current_yaw != last_yaw:
+                print(f"🔄 [ROTATION] Drone {device_id} xoay: {last_yaw}° -> {current_yaw}°", flush=True)
+                
+        drone._last_lat = current_lat
+        drone._last_lng = current_lng
+        drone._last_yaw = current_yaw
+
         # Throttle DB Writes (Chỉ ghi DB 1 giây/lần mỗi drone để tránh SQLite lock)
         import time
         current_time = time.time()
@@ -98,6 +116,7 @@ def on_message(client, userdata, msg):
                         "lat": log.latitude,
                         "lng": log.longitude,
                         "alt": log.altitude,
+                        "yaw": drone._last_yaw,
                         "battery": log.battery,
                         "state": log.state,
                         "is_active": drone.is_active,

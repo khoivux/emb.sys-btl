@@ -23,6 +23,10 @@ target_lat, target_lng = lat, lng
 battery = 95.0
 yaw = 0  # Góc hướng đầu (heading) của drone
 
+# Bộ cộng dồn tọa độ (Accumulator) để khắc phục lỗi phần cứng float 32-bit
+lat_offset = 0.0
+lng_offset = 0.0
+
 # Biến vận tốc & thời gian để điều khiển giữ phím mượt mà
 vx, vy, vz, v_yaw = 0.0, 0.0, 0.0, 0.0
 last_vx_update = 0
@@ -37,6 +41,7 @@ last_vyaw_update = 0
 def on_message(topic, msg):
     global state, target_lat, target_lng, lat, lng, alt, yaw
     global vx, vy, vz, v_yaw, last_vx_update, last_vy_update, last_vz_update, last_vyaw_update
+    global lat_offset, lng_offset
     try:
         data = json.loads(msg)
         # Sửa: Backend gửi key "type" thay vì "command"
@@ -67,7 +72,7 @@ def on_message(topic, msg):
                 direction = params.get("direction")
                 now = time.ticks_ms()
                 
-                # Cập nhật vận tốc mục tiêu (bước nhỏ hơn để cực kỳ mượt mà ở 20Hz)
+                # Cập nhật vận tốc mục tiêu: trả lại tốc độ chậm 3m/s (đã có accumulator lo phần float)
                 step = 0.000003  # Tương đương ~0.3 mét mỗi 100ms (~3 m/s)
                 if direction == "FORWARD":
                     vx = step
@@ -140,7 +145,7 @@ def main():
                 client.check_msg()
             
             # --- LOGIC GIẢ LẬP VẬT LÝ ---
-            global alt, lat, lng, state, yaw, vx, vy, vz, v_yaw
+            global alt, lat, lng, state, yaw, vx, vy, vz, v_yaw, lat_offset, lng_offset
             
             # Watchdog kiểm tra nút bấm: Nếu trong vòng 150ms không có lệnh mới gửi tới, hãm phanh về 0
             now = time.ticks_ms()
@@ -189,8 +194,18 @@ def main():
             # Cộng dồn di chuyển thủ công dựa trên vận tốc vx, vy
             if alt > 2.0:
                 if vx != 0.0 or vy != 0.0:
-                    lat += vx
-                    lng += vy
+                    # Cộng dồn vận tốc vào bộ đệm tạm thời (accumulator)
+                    lat_offset += vx
+                    lng_offset += vy
+                    
+                    # Khi bộ đệm tích lũy đủ lớn (vượt qua giới hạn float của ESP32) thì mới xả vào tọa độ thật
+                    if abs(lat_offset) >= 0.00001:
+                        lat += lat_offset
+                        lat_offset = 0.0
+                    if abs(lng_offset) >= 0.00001:
+                        lng += lng_offset
+                        lng_offset = 0.0
+                        
                 # Cộng dồn góc quay đầu (Yaw)
                 if v_yaw != 0.0:
                     yaw = (yaw + v_yaw) % 360
