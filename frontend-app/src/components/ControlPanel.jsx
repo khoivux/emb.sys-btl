@@ -166,6 +166,24 @@ const ControlPanel = ({ drone, onCommand, onCommandWS, onClose }) => {
         >
           <AlertOctagon size={20} /> Dừng khẩn
         </button>
+        <button
+          onClick={() => {
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                  onCommand(targetId, 'SET_POSITION', { lat: pos.coords.latitude, lng: pos.coords.longitude });
+                  alert("Đã gửi vị trí hiện tại của bạn (" + pos.coords.latitude.toFixed(5) + ", " + pos.coords.longitude.toFixed(5) + ") tới Drone!");
+                },
+                (err) => alert("Lỗi lấy vị trí: " + err.message)
+              );
+            } else {
+              alert("Trình duyệt không hỗ trợ Geolocation");
+            }
+          }}
+          className="col-span-2 flex items-center justify-center gap-2 p-3 bg-indigo-600 hover:bg-indigo-500 active:scale-95 rounded-xl transition-all font-bold mt-1"
+        >
+          <Navigation size={20} /> Đồng bộ vị trí Web
+        </button>
       </div>
 
       {/* D-Pad — WebSocket (real-time) */}

@@ -18,7 +18,7 @@ TOPIC_COMMAND = b"drone/" + CLIENT_ID.encode() + b"/command"
 
 # --- 2. TRẠNG THÁI DRONE ---
 state = "IDLE"
-lat, lng, alt = 20.980812, 105.795931, 0.0
+lat, lng, alt = 20.9808271, 105.7874779, 0.0
 target_lat, target_lng = lat, lng
 battery = 95.0
 yaw = 0  # Góc hướng đầu (heading) của drone
@@ -102,6 +102,16 @@ def on_message(topic, msg):
             if alt > 2.0:
                 v_yaw = 4.0   # Tốc độ xoay phải: 40°/giây
                 last_vyaw_update = time.ticks_ms()
+        elif cmd == "SET_POSITION":
+            new_lat = params.get("lat")
+            new_lng = params.get("lng")
+            if new_lat is not None and new_lng is not None:
+                lat = float(new_lat)
+                lng = float(new_lng)
+                target_lat, target_lng = lat, lng
+                lat_offset = 0.0
+                lng_offset = 0.0
+                print(f"📍 Đã cập nhật vị trí xuất phát từ Web: {lat}, {lng}")
     except Exception as e: 
         print("Lỗi giải mã lệnh:", e)
 
@@ -194,9 +204,17 @@ def main():
             # Cộng dồn di chuyển thủ công dựa trên vận tốc vx, vy
             if alt > 2.0:
                 if vx != 0.0 or vy != 0.0:
+                    import math
+                    yaw_rad = math.radians(yaw)
+                    
+                    # Chuyển đổi vận tốc tương đối (vx: tiến/lùi, vy: phải/trái) 
+                    # sang vận tốc tuyệt đối trên bản đồ (lat, lng) dựa theo góc yaw
+                    real_lat_step = vx * math.cos(yaw_rad) - vy * math.sin(yaw_rad)
+                    real_lng_step = vx * math.sin(yaw_rad) + vy * math.cos(yaw_rad)
+
                     # Cộng dồn vận tốc vào bộ đệm tạm thời (accumulator)
-                    lat_offset += vx
-                    lng_offset += vy
+                    lat_offset += real_lat_step
+                    lng_offset += real_lng_step
                     
                     # Khi bộ đệm tích lũy đủ lớn (vượt qua giới hạn float của ESP32) thì mới xả vào tọa độ thật
                     if abs(lat_offset) >= 0.00001:

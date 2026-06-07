@@ -56,7 +56,7 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
     ? [focusedDrone.latitude, focusedDrone.longitude]
     : (dronesWithCoords.length > 0 
         ? [dronesWithCoords[0].latitude, dronesWithCoords[0].longitude] 
-        : [20.980812, 105.795931]);
+        : [20.9808271, 105.7874779]);
 
   return (
     <div className="absolute inset-0 z-0 w-full h-full overflow-hidden">

@@ -73,10 +73,10 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
 
     const avgLat = validDrones.length > 0 
       ? validDrones.reduce((s, d) => s + d.latitude, 0) / validDrones.length
-      : 20.980812;
+      : 20.9808271;
     const avgLng = validDrones.length > 0
       ? validDrones.reduce((s, d) => s + d.longitude, 0) / validDrones.length
-      : 105.795931;
+      : 105.7874779;
 
     switch (selectedPattern) {
       case 'line':
