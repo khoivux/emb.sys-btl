@@ -190,16 +190,39 @@ def main():
                 alt = max(1.0, min(alt + vz, 100.0))
 
             # 2. Xử lý Di chuyển tự động (GOTO)
-            if state == "MOVING" and alt > 2:
-                step = 0.0001
-                if abs(lat - target_lat) > step:
-                    lat += step if target_lat > lat else -step
-                if abs(lng - target_lng) > step:
-                    lng += step if target_lng > lng else -step
-                
-                if abs(lat - target_lat) < step and abs(lng - target_lng) < step:
-                    print("🎯 Đã tới đích!")
-                    state = "HOVER"
+            if state == "MOVING":
+                if alt <= 2.0:
+                    alt += 0.2  # Tự động cất cánh an toàn trước khi bay ngang
+                else:
+                    import math
+                    v_lat = lat + lat_offset
+                    v_lng = lng + lng_offset
+                    dist_lat = target_lat - v_lat
+                    dist_lng = target_lng - v_lng
+                    dist = math.sqrt(dist_lat**2 + dist_lng**2)
+                    
+                    if dist > 0.000005:  # Ngưỡng an toàn để dừng (khoảng 0.5m)
+                        # Vận tốc tự động: Bay nhanh khi xa, chậm lại khi gần
+                        raw_speed = min(0.00005, max(0.000015, dist * 0.2))
+                        # Chống bay lố (Anti-overshoot)
+                        current_speed = min(dist, raw_speed)
+                        
+                        lat_offset += (dist_lat / dist) * current_speed
+                        lng_offset += (dist_lng / dist) * current_speed
+                        
+                        if abs(lat_offset) >= 0.00005:
+                            lat += lat_offset
+                            lat_offset = 0.0
+                        if abs(lng_offset) >= 0.00005:
+                            lng += lng_offset
+                            lng_offset = 0.0
+                    else:
+                        print("🎯 Đã tới đích!")
+                        lat = target_lat
+                        lng = target_lng
+                        lat_offset = 0.0
+                        lng_offset = 0.0
+                        state = "HOVER"
 
             # Cộng dồn di chuyển thủ công dựa trên vận tốc vx, vy
             if alt > 2.0:
@@ -216,11 +239,10 @@ def main():
                     lat_offset += real_lat_step
                     lng_offset += real_lng_step
                     
-                    # Khi bộ đệm tích lũy đủ lớn (vượt qua giới hạn float của ESP32) thì mới xả vào tọa độ thật
-                    if abs(lat_offset) >= 0.00001:
+                    if abs(lat_offset) >= 0.00005:
                         lat += lat_offset
                         lat_offset = 0.0
-                    if abs(lng_offset) >= 0.00001:
+                    if abs(lng_offset) >= 0.00005:
                         lng += lng_offset
                         lng_offset = 0.0
                         
@@ -234,8 +256,8 @@ def main():
                 telemetry = {
                     "device_id": CLIENT_ID,
                     "state": state,
-                    "latitude": lat, 
-                    "longitude": lng, 
+                    "latitude": lat + lat_offset, 
+                    "longitude": lng + lng_offset, 
                     "altitude": round(alt, 2),
                     "yaw": yaw,
                     "battery": battery, 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Tooltip, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -36,6 +36,116 @@ const MapEvents = ({ onMapClick }) => {
   });
   return null;
 };
+
+// Memoized Drone Marker to prevent DOM churn on high-frequency updates
+const DroneMarker = React.memo(({ drone, selectionMode, isSelected, isFocused, isOnline, onDroneSelect, onDroneFocus, showLabels }) => {
+  if (typeof drone.latitude !== 'number' || isNaN(drone.latitude) || 
+      typeof drone.longitude !== 'number' || isNaN(drone.longitude)) {
+    return null;
+  }
+
+  const strokeColor = selectionMode && isSelected 
+    ? '#EAB308'  // vàng khi đã chọn
+    : (!selectionMode && isFocused
+        ? '#06B6D4'  // màu cyan khi đang được focus
+        : (isOnline ? '#3B82F6' : '#64748b'));
+        
+  const armColor = selectionMode && isSelected
+    ? '#EAB308'
+    : (!selectionMode && isFocused
+        ? '#22D3EE'  // màu cyan sáng khi focus
+        : (isOnline ? '#60A5FA' : '#475569'));
+        
+  let markerClass = 'drone-marker-custom';
+  if (selectionMode && isSelected) {
+    markerClass += ' drone-selected';
+  } else if (!selectionMode && isFocused) {
+    markerClass += ' drone-focused';
+  }
+
+  const icon = useMemo(() => L.divIcon({
+      className: markerClass,
+      html: `
+          <svg width="50" height="50" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <g style="transform-origin: center; transform: rotate(${drone.yaw || 0}deg); transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);">
+                  <circle cx="12" cy="12" r="3" fill="white" stroke="${strokeColor}" stroke-width="2"/>
+                  <path d="M12 2L16 9H8L12 2Z" fill="#EF4444" stroke="#EF4444" stroke-width="1"/> 
+                  <path d="M4 12H9M15 12H20M12 15V20" stroke="${armColor}" stroke-width="2" stroke-linecap="round"/>
+                  <circle cx="4" cy="12" r="1.5" fill="#1E293B" stroke="${armColor}"/>
+                  <circle cx="20" cy="12" r="1.5" fill="#1E293B" stroke="${armColor}"/>
+                  <circle cx="12" cy="20" r="1.5" fill="#1E293B" stroke="${armColor}"/>
+              </g>
+          </svg>
+      `,
+      iconSize: [50, 50],
+      iconAnchor: [25, 25]
+  }), [drone.yaw, strokeColor, armColor, markerClass]);
+
+  const eventHandlers = useMemo(() => {
+    return selectionMode 
+      ? {
+          click: (e) => {
+            if (isOnline && onDroneSelect) {
+              onDroneSelect(drone.device_id);
+            }
+            e.target.closePopup();
+          }
+        }
+      : {
+          click: (e) => {
+            L.DomEvent.stopPropagation(e.originalEvent);
+            if (onDroneFocus) {
+              onDroneFocus(isFocused ? null : drone.device_id);
+            }
+            e.target.closePopup();
+          }
+        };
+  }, [selectionMode, isOnline, onDroneSelect, drone.device_id, onDroneFocus, isFocused]);
+
+  return (
+      <Marker position={[drone.latitude, drone.longitude]} icon={icon} eventHandlers={eventHandlers}>
+          {!selectionMode && !isFocused && (
+            <Popup>
+              <div className="p-1 min-w-[150px]">
+                  <div className="flex items-center gap-2 mb-1">
+                      <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></div>
+                      <h3 className="font-bold text-slate-800 m-0 text-sm">{drone.name}</h3>
+                  </div>
+                  <p className="text-[10px] text-slate-500 m-0 font-mono mb-2">{drone.device_id}</p>
+                  <div className="border-t border-slate-100 pt-2 space-y-1">
+                      <div className="flex justify-between">
+                          <span className="text-[10px] text-slate-400">⚡ Pin</span>
+                          <span className="text-[10px] font-bold text-slate-700">{drone.battery}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                          <span className="text-[10px] text-slate-400">📏 Độ cao</span>
+                          <span className="text-[10px] font-bold text-slate-700">{drone.altitude}m</span>
+                      </div>
+                      <div className="text-right mt-1">
+                          <p className="text-[9px] m-0 text-slate-400 italic">Cập nhật: {new Date(drone.timestamp * 1000).toLocaleTimeString()}</p>
+                      </div>
+                  </div>
+              </div>
+            </Popup>
+          )}
+          {showLabels && (
+            <Tooltip permanent direction="top" offset={[0, -10]} opacity={0.9}>
+                <span className={`text-[10px] font-bold px-1 rounded shadow-sm ${
+                  selectionMode && isSelected
+                    ? 'text-yellow-600 bg-yellow-50 ring-1 ring-yellow-400'
+                    : (!selectionMode && isFocused
+                        ? 'text-cyan-400 bg-slate-900 border border-cyan-500/30 shadow-cyan-900/20'
+                        : (isOnline ? 'text-blue-500 bg-white' : 'text-slate-400 bg-slate-100'))
+                }`}>
+                    {selectionMode && isSelected ? '✓ ' : ''}
+                    {!selectionMode && isFocused ? '📡 ' : ''}
+                    {drone.name}
+                </span>
+            </Tooltip>
+          )}
+      </Marker>
+  );
+});
 
 const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSelect, ghostPositions = [], showLabels = true, focusedDroneId = null, onDroneFocus, onMapClick }) => {
   const droneList = Object.values(drones);
@@ -93,123 +203,19 @@ const MapView = ({ drones, selectionMode = false, selectedDrones = [], onDroneSe
           maxZoom={21}
         />
         
-        {droneList.map(drone => {
-            const isOnline = drone.is_active;
-            const isSelected = selectedDrones.includes(drone.device_id);
-            const isFocused = focusedDroneId === drone.device_id;
-            
-            const strokeColor = selectionMode && isSelected 
-              ? '#EAB308'  // vàng khi đã chọn
-              : (!selectionMode && isFocused
-                  ? '#06B6D4'  // màu cyan khi đang được focus
-                  : (isOnline ? '#3B82F6' : '#64748b'));
-            const armColor = selectionMode && isSelected
-              ? '#EAB308'
-              : (!selectionMode && isFocused
-                  ? '#22D3EE'  // màu cyan sáng khi focus
-                  : (isOnline ? '#60A5FA' : '#475569'));
-            
-            let markerClass = 'drone-marker-custom';
-            if (selectionMode && isSelected) {
-              markerClass += ' drone-selected';
-            } else if (!selectionMode && isFocused) {
-              markerClass += ' drone-focused';
-            }
-            
-            // Skip rendering this marker if coordinates are invalid
-            if (typeof drone.latitude !== 'number' || isNaN(drone.latitude) || 
-                typeof drone.longitude !== 'number' || isNaN(drone.longitude)) {
-              return null;
-            }
-
-            return (
-                <Marker 
-                    key={drone.device_id} 
-                    position={[drone.latitude, drone.longitude]}
-                    icon={L.divIcon({
-                        className: markerClass,
-                        html: `
-                            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <g style="transform-origin: center; transform: rotate(${drone.yaw || 0}deg); transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);">
-                                    <circle cx="12" cy="12" r="3" fill="white" stroke="${strokeColor}" stroke-width="2"/>
-                                    <path d="M12 2L16 9H8L12 2Z" fill="#EF4444" stroke="#EF4444" stroke-width="1"/> 
-                                    <path d="M4 12H9M15 12H20M12 15V20" stroke="${armColor}" stroke-width="2" stroke-linecap="round"/>
-                                    <circle cx="4" cy="12" r="1.5" fill="#1E293B" stroke="${armColor}"/>
-                                    <circle cx="20" cy="12" r="1.5" fill="#1E293B" stroke="${armColor}"/>
-                                    <circle cx="12" cy="20" r="1.5" fill="#1E293B" stroke="${armColor}"/>
-                                </g>
-                            </svg>
-                        `,
-                        iconSize: [50, 50],
-                        iconAnchor: [25, 25]
-                    })}
-                    eventHandlers={
-                      selectionMode 
-                        ? {
-                            click: (e) => {
-                              if (isOnline && onDroneSelect) {
-                                onDroneSelect(drone.device_id);
-                              }
-                              e.target.closePopup();
-                            }
-                          }
-                        : {
-                            click: (e) => {
-                              if (onDroneFocus) {
-                                // Toggle: click lại drone đang focus → bỏ focus
-                                onDroneFocus(isFocused ? null : drone.device_id);
-                              }
-                              e.target.closePopup();
-                              if (e.originalEvent) {
-                                e.originalEvent.stopPropagation();
-                              }
-                            }
-                          }
-                    }
-                >
-                    {/* Chỉ hiển thị popup khi KHÔNG ở chế độ chọn và drone KHÔNG được focus */}
-                    {!selectionMode && !isFocused && (
-                      <Popup>
-                        <div className="p-1 min-w-[150px]">
-                            <div className="flex items-center gap-2 mb-1">
-                                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></div>
-                                <h3 className="font-bold text-slate-800 m-0 text-sm">{drone.name}</h3>
-                            </div>
-                            <p className="text-[10px] text-slate-500 m-0 font-mono mb-2">{drone.device_id}</p>
-                            <div className="border-t border-slate-100 pt-2 space-y-1">
-                                <div className="flex justify-between">
-                                    <span className="text-[10px] text-slate-400">⚡ Pin</span>
-                                    <span className="text-[10px] font-bold text-slate-700">{drone.battery}%</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-[10px] text-slate-400">📏 Độ cao</span>
-                                    <span className="text-[10px] font-bold text-slate-700">{drone.altitude}m</span>
-                                </div>
-                                <div className="text-right mt-1">
-                                    <p className="text-[9px] m-0 text-slate-400 italic">Cập nhật: {new Date(drone.timestamp * 1000).toLocaleTimeString()}</p>
-                                </div>
-                            </div>
-                        </div>
-                      </Popup>
-                    )}
-                    {showLabels && (
-                      <Tooltip permanent direction="top" offset={[0, -10]} opacity={0.9}>
-                          <span className={`text-[10px] font-bold px-1 rounded shadow-sm ${
-                            selectionMode && isSelected
-                              ? 'text-yellow-600 bg-yellow-50 ring-1 ring-yellow-400'
-                              : (!selectionMode && isFocused
-                                  ? 'text-cyan-400 bg-slate-900 border border-cyan-500/30 shadow-cyan-900/20'
-                                  : (isOnline ? 'text-blue-500 bg-white' : 'text-slate-400 bg-slate-100'))
-                          }`}>
-                              {selectionMode && isSelected ? '✓ ' : ''}
-                              {!selectionMode && isFocused ? '📡 ' : ''}
-                              {drone.name}
-                          </span>
-                      </Tooltip>
-                    )}
-                </Marker>
-            );
-        })}
+        {droneList.map(drone => (
+            <DroneMarker 
+                key={drone.device_id}
+                drone={drone}
+                selectionMode={selectionMode}
+                isSelected={selectedDrones.includes(drone.device_id)}
+                isFocused={focusedDroneId === drone.device_id}
+                isOnline={drone.is_active}
+                onDroneSelect={onDroneSelect}
+                onDroneFocus={onDroneFocus}
+                showLabels={showLabels}
+            />
+        ))}
 
         {/* Ghost markers — vị trí đích dự kiến */}
         {ghostPositions.map(ghost => {
