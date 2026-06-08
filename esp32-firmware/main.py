@@ -268,8 +268,10 @@ def main():
                 
             time.sleep(0.1)
         except Exception as e:
-            print("Lỗi vòng lặp:", e)
+            print("Lỗi vòng lặp (Mất kết nối MQTT/WiFi):", e)
+            print("Khởi động lại ESP32 để kết nối lại...")
             time.sleep(2)
+            machine.reset()
 
 if __name__ == "__main__":
     main()

@@ -78,26 +78,29 @@ const DroneMarker = React.memo(({ drone, selectionMode, isSelected, isFocused, i
       iconAnchor: [25, 25]
   }), [drone.yaw, strokeColor, armColor, markerClass]);
 
-  const eventHandlers = useMemo(() => {
-    return selectionMode 
-      ? {
-          click: (e) => {
-            if (isOnline && onDroneSelect) {
-              onDroneSelect(drone.device_id);
-            }
-            e.target.closePopup();
-          }
+  const propsRef = React.useRef({ selectionMode, isOnline, onDroneSelect, droneId: drone.device_id, onDroneFocus, isFocused });
+  
+  React.useEffect(() => {
+    propsRef.current = { selectionMode, isOnline, onDroneSelect, droneId: drone.device_id, onDroneFocus, isFocused };
+  });
+
+  const eventHandlers = useMemo(() => ({
+    click: (e) => {
+      L.DomEvent.stopPropagation(e.originalEvent);
+      const p = propsRef.current;
+      
+      if (p.selectionMode) {
+        if (p.isOnline && p.onDroneSelect) {
+          p.onDroneSelect(p.droneId);
         }
-      : {
-          click: (e) => {
-            L.DomEvent.stopPropagation(e.originalEvent);
-            if (onDroneFocus) {
-              onDroneFocus(isFocused ? null : drone.device_id);
-            }
-            e.target.closePopup();
-          }
-        };
-  }, [selectionMode, isOnline, onDroneSelect, drone.device_id, onDroneFocus, isFocused]);
+      } else {
+        if (p.onDroneFocus) {
+          p.onDroneFocus(p.isFocused ? null : p.droneId);
+        }
+      }
+      e.target.closePopup();
+    }
+  }), []);
 
   return (
       <Marker position={[drone.latitude, drone.longitude]} icon={icon} eventHandlers={eventHandlers}>
