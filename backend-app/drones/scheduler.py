@@ -19,11 +19,20 @@ def execute_scheduled_mission(mission_id):
             return
 
         targets = mission.targets_json
-        mqtt_messages = []
+        takeoff_messages = []
+        goto_messages = []
 
         for t in targets:
             drone_id = t.get('drone_id')
-            mqtt_messages.append({
+            
+            # 1. Lệnh Cất cánh
+            takeoff_messages.append({
+                'topic': f"drone/{drone_id}/command",
+                'payload': json.dumps({"type": "TAKEOFF"}),
+            })
+            
+            # 2. Lệnh Di chuyển
+            goto_messages.append({
                 'topic': f"drone/{drone_id}/command",
                 'payload': json.dumps({
                     "type": "GOTO",
@@ -31,11 +40,19 @@ def execute_scheduled_mission(mission_id):
                 }),
             })
 
-        if mqtt_messages:
-            get_mqtt_service().publish_batch(mqtt_messages)
+        if takeoff_messages:
+            import time
+            # Gửi lệnh cất cánh trước
+            get_mqtt_service().publish_batch(takeoff_messages)
+            
+            # Đợi 2 giây cho firmware/mô phỏng nâng độ cao (alt > 2)
+            time.sleep(2)
+            
+            # Gửi lệnh đi tới đích
+            get_mqtt_service().publish_batch(goto_messages)
             mission.status = 'EXECUTED'
             mission.save()
-            logger.info(f"[Scheduler] Đã thực thi Mission #{mission_id} — {len(mqtt_messages)} drone(s) nhận lệnh.")
+            logger.info(f"[Scheduler] Đã thực thi Mission #{mission_id} — {len(takeoff_messages)} drone(s) nhận lệnh.")
         else:
             mission.status = 'FAILED'
             mission.save()

@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Clock, X, ChevronRight, ChevronLeft, CheckCircle2,
-  MapPin, CalendarClock, Rocket, RotateCcw, Trash2
+  MapPin, CalendarClock, Rocket, RotateCcw, Trash2, Save, Layers
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
@@ -50,7 +50,16 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
   const [step, setStep] = useState(1); // 1: Chọn Drone | 2: Chọn điểm đích | 3: Cài giờ & Xác nhận
 
   // Step 1: danh sách drone được chọn (array of device_id)
+  const [activeTab, setActiveTab] = useState('single'); // 'single' or 'groups'
   const [selectedDroneIds, setSelectedDroneIds] = useState([]);
+  const [clusters, setClusters] = useState([]);
+  const [selectedClusterIds, setSelectedClusterIds] = useState([]);
+  
+  const [newGroupName, setNewGroupName] = useState('');
+  const [isSavingGroup, setIsSavingGroup] = useState(false);
+  
+  // Dùng cho Step 2 & 3 (danh sách hợp nhất sau khi ấn Tiếp)
+  const [mergedDroneIds, setMergedDroneIds] = useState([]);
 
   // Step 2: map drone_id → {lat, lng}
   const [targets, setTargets] = useState({}); // { drone_id: {lat, lng} | null }
@@ -62,13 +71,106 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
   const [result, setResult] = useState(null); // {ok, message}
 
   const droneList = Object.values(drones);
-  const onlineDrones = droneList.filter(d => d.is_active);
+
+  // ── Lấy danh sách nhóm ──
+  useEffect(() => {
+    const fetchClusters = async () => {
+      try {
+        const hostname = window.location.hostname;
+        const res = await fetch(`http://${hostname}:8000/api/clusters/`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setClusters(data);
+        }
+      } catch (e) {
+        console.error("Lỗi tải danh sách nhóm", e);
+      }
+    };
+    if (token) fetchClusters();
+  }, [token]);
 
   // ── Step 1 helpers ──
   const toggleDrone = (id) =>
     setSelectedDroneIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
+
+  const toggleCluster = (id) =>
+    setSelectedClusterIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+
+  const handleSaveGroup = async () => {
+    if (!newGroupName.trim() || selectedDroneIds.length === 0) return;
+    setIsSavingGroup(true);
+    
+    // Lấy ID DB của các drone đã chọn
+    const droneDbIds = selectedDroneIds.map(devId => drones[devId]?.id).filter(id => id);
+
+    try {
+      const hostname = window.location.hostname;
+      const res = await fetch(`http://${hostname}:8000/api/clusters/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: newGroupName,
+          description: 'Lưu nhanh từ Đặt lịch bay',
+          drones: droneDbIds
+        })
+      });
+      if (res.ok) {
+        const newCluster = await res.json();
+        setClusters(prev => [...prev, newCluster]);
+        setNewGroupName('');
+        setActiveTab('groups');
+      } else {
+        alert("Có lỗi xảy ra khi lưu nhóm.");
+      }
+    } catch (e) {
+      alert("Lỗi lưu nhóm: " + e.message);
+    } finally {
+      setIsSavingGroup(false);
+    }
+  };
+
+  const handleNextToStep2 = () => {
+    const set = new Set(selectedDroneIds);
+    selectedClusterIds.forEach(cId => {
+      const cluster = clusters.find(c => c.id === cId);
+      if (cluster && cluster.drone_details) {
+        cluster.drone_details.forEach(d => {
+          if (d.is_active) {
+            set.add(d.device_id);
+          }
+        });
+      }
+    });
+    
+    const finalIds = Array.from(set);
+    if (finalIds.length === 0) {
+      alert("Chưa có drone nào được chọn, hoặc tất cả drone trong nhóm đều đang Offline.");
+      return;
+    }
+    
+    setMergedDroneIds(finalIds);
+    setActiveDroneForPicking(finalIds[0] || null);
+    
+    // Xoá các target đã set nhưng không nằm trong danh sách gộp
+    setTargets(prev => {
+        const next = {...prev};
+        Object.keys(next).forEach(k => {
+            if (!finalIds.includes(k)) delete next[k];
+        });
+        return next;
+    });
+
+    setStep(2);
+  };
 
   // ── Step 2 helpers ──
   const handlePickPoint = useCallback((latlng) => {
@@ -77,16 +179,16 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
   }, [activeDroneForPicking]);
 
   // Listen to clicks from the main map
-  React.useEffect(() => {
+  useEffect(() => {
     if (mapClickEvent && activeDroneForPicking) {
       handlePickPoint(mapClickEvent);
     }
-  }, [mapClickEvent]);
+  }, [mapClickEvent, activeDroneForPicking, handlePickPoint]);
 
   // Pass ghost positions up to the main map
-  React.useEffect(() => {
+  useEffect(() => {
     if (step >= 2 && onGhostPositions) {
-      const ghosts = selectedDroneIds
+      const ghosts = mergedDroneIds
         .filter(id => targets[id])
         .map(id => ({
           droneId: id,
@@ -97,15 +199,15 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
     } else if (step === 1 && onGhostPositions) {
       onGhostPositions([]);
     }
-  }, [targets, step, selectedDroneIds, onGhostPositions]);
+  }, [targets, step, mergedDroneIds, onGhostPositions]);
 
-  const allTargetsPicked = selectedDroneIds.every(id => targets[id]);
+  const allTargetsPicked = mergedDroneIds.length > 0 && mergedDroneIds.every(id => targets[id]);
 
   // ── Step 3 helpers ──
   const handleSubmit = async () => {
     setSubmitting(true);
     const payload = {
-      targets: selectedDroneIds.map(id => ({
+      targets: mergedDroneIds.map(id => ({
         drone_id: id,
         lat: targets[id].lat,
         lng: targets[id].lng,
@@ -114,7 +216,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
     };
     try {
       const hostname = window.location.hostname;
-      const res = await fetch(`http://${hostname}:8000/api/drones/scheduled_missions/`, {
+      const res = await fetch(`http://${hostname}:8000/api/scheduled_missions/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +241,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
   const minDatetime = new Date(Date.now() + 30000).toISOString().slice(0, 16);
 
   // ===================== RENDER =====================
-  const stepTitles = ['Chọn Drone', 'Chọn Điểm Đích', 'Cài Giờ Bay'];
+  const stepTitles = ['Chọn Drone/Nhóm', 'Chọn Điểm Đích', 'Cài Giờ Bay'];
 
   return (
     <div className="absolute top-4 left-4 z-30 w-96 max-h-[calc(100vh-120px)] flex flex-col bg-slate-900/95 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl text-white overflow-hidden">
@@ -166,48 +268,134 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
 
-        {/* ── Step 1: Chọn Drone ── */}
+        {/* ── Step 1: Chọn Drone/Nhóm ── */}
         {step === 1 && (
-          <div className="space-y-2">
-            <p className="text-[10px] text-slate-500 mb-3">Chọn các Drone cần lên lịch. Chỉ drone Online mới khả dụng.</p>
-            {droneList.length === 0 && (
-              <div className="text-center py-8 text-slate-500 text-sm">Chưa có drone nào kết nối</div>
+          <div className="space-y-4">
+            <div className="flex border-b border-white/10">
+              <button 
+                onClick={() => setActiveTab('single')} 
+                className={`flex-1 py-2.5 text-xs font-bold border-b-2 transition-colors flex items-center justify-center gap-1.5 ${activeTab === 'single' ? 'border-purple-500 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              >
+                <Rocket size={14} /> Drone lẻ
+              </button>
+              <button 
+                onClick={() => setActiveTab('groups')} 
+                className={`flex-1 py-2.5 text-xs font-bold border-b-2 transition-colors flex items-center justify-center gap-1.5 ${activeTab === 'groups' ? 'border-purple-500 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              >
+                <Layers size={14} /> Nhóm đã lưu
+              </button>
+            </div>
+
+            {activeTab === 'single' && (
+              <div className="space-y-3">
+                <p className="text-[10px] text-slate-500 leading-tight">Chọn các Drone lẻ. Chỉ drone Online mới có thể gộp vào danh sách bay.</p>
+                {droneList.length === 0 && (
+                  <div className="text-center py-8 text-slate-500 text-sm">Chưa có drone nào kết nối</div>
+                )}
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+                  {droneList.map(drone => {
+                    const isOnline = drone.is_active;
+                    const isChecked = selectedDroneIds.includes(drone.device_id);
+                    return (
+                      <button
+                        key={drone.device_id}
+                        onClick={() => isOnline && toggleDrone(drone.device_id)}
+                        disabled={!isOnline}
+                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left ${isChecked
+                            ? 'bg-purple-600/10 border-purple-500/40'
+                            : isOnline
+                              ? 'bg-slate-800/50 border-white/5 hover:bg-slate-800 hover:border-white/10'
+                              : 'bg-slate-800/20 border-white/5 opacity-40 cursor-not-allowed'
+                          }`}
+                      >
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${isChecked ? 'bg-purple-500 border-purple-500' : 'border-slate-600'}`}>
+                          {isChecked && <CheckCircle2 size={12} className="text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium truncate">{drone.name}</span>
+                            <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-green-500' : 'bg-slate-600'}`} />
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono">{drone.device_id}</span>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={`text-xs font-bold ${drone.battery < 20 ? 'text-red-400' : 'text-green-400'}`}>
+                            {drone.battery ?? '—'}%
+                          </div>
+                          <div className="text-[9px] text-slate-500">{isOnline ? 'Online' : 'Offline'}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                
+                {selectedDroneIds.length > 0 && (
+                  <div className="mt-2 p-3 bg-slate-800/50 border border-white/10 rounded-xl space-y-2">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Lưu nhóm nhanh</p>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="Tên nhóm mới..."
+                        value={newGroupName}
+                        onChange={e => setNewGroupName(e.target.value)}
+                        className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-2.5 text-xs text-white focus:outline-none focus:border-purple-500 transition-colors"
+                      />
+                      <button 
+                        onClick={handleSaveGroup}
+                        disabled={!newGroupName.trim() || isSavingGroup}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${newGroupName.trim() && !isSavingGroup ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
+                      >
+                        {isSavingGroup ? <RotateCcw size={12} className="animate-spin" /> : <Save size={12} />}
+                        Lưu
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
-            {droneList.map(drone => {
-              const isOnline = drone.is_active;
-              const isChecked = selectedDroneIds.includes(drone.device_id);
-              return (
-                <button
-                  key={drone.device_id}
-                  onClick={() => isOnline && toggleDrone(drone.device_id)}
-                  disabled={!isOnline}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                    isChecked
-                      ? 'bg-purple-600/10 border-purple-500/40'
-                      : isOnline
-                        ? 'bg-slate-800/50 border-white/5 hover:bg-slate-800 hover:border-white/10'
-                        : 'bg-slate-800/20 border-white/5 opacity-40 cursor-not-allowed'
-                  }`}
-                >
-                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isChecked ? 'bg-purple-500 border-purple-500' : 'border-slate-600'}`}>
-                    {isChecked && <CheckCircle2 size={14} className="text-white" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate">{drone.name}</span>
-                      <div className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-green-500' : 'bg-slate-600'}`} />
-                    </div>
-                    <span className="text-[10px] text-slate-500 font-mono">{drone.device_id}</span>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className={`text-xs font-bold ${drone.battery < 20 ? 'text-red-400' : 'text-green-400'}`}>
-                      {drone.battery ?? '—'}%
-                    </div>
-                    <div className="text-[9px] text-slate-500">{isOnline ? 'Online' : 'Offline'}</div>
-                  </div>
-                </button>
-              );
-            })}
+
+            {activeTab === 'groups' && (
+              <div className="space-y-3">
+                <p className="text-[10px] text-slate-500 leading-tight">Chọn các nhóm đã lưu. Chỉ các drone Online trong nhóm mới được gộp vào danh sách.</p>
+                {clusters.length === 0 && (
+                  <div className="text-center py-8 text-slate-500 text-sm">Chưa có nhóm nào được lưu</div>
+                )}
+                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+                  {clusters.map(cluster => {
+                    const isChecked = selectedClusterIds.includes(cluster.id);
+                    const onlineCount = cluster.drone_details.filter(d => d.is_active).length;
+                    const totalCount = cluster.drone_details.length;
+                    
+                    return (
+                      <button
+                        key={cluster.id}
+                        onClick={() => toggleCluster(cluster.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all text-left ${isChecked
+                            ? 'bg-purple-600/10 border-purple-500/40'
+                            : 'bg-slate-800/50 border-white/5 hover:bg-slate-800 hover:border-white/10'
+                          }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${isChecked ? 'bg-purple-500 border-purple-500' : 'border-slate-600'}`}>
+                            {isChecked && <CheckCircle2 size={12} className="text-white" />}
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-white">{cluster.name}</div>
+                            <div className="text-[10px] text-slate-500 line-clamp-1">{cluster.description || 'Không có mô tả'}</div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={`text-xs font-bold ${onlineCount === 0 ? 'text-slate-500' : 'text-green-400'}`}>
+                            {onlineCount}/{totalCount}
+                          </div>
+                          <div className="text-[9px] text-slate-500">Online</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -219,7 +407,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
             </p>
             {/* Danh sách drone để chọn active */}
             <div className="flex flex-wrap gap-1.5">
-              {selectedDroneIds.map(id => {
+              {mergedDroneIds.map(id => {
                 const drone = drones[id];
                 const picked = !!targets[id];
                 const isActive = activeDroneForPicking === id;
@@ -227,13 +415,12 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
                   <button
                     key={id}
                     onClick={() => setActiveDroneForPicking(isActive ? null : id)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-                      isActive
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${isActive
                         ? 'bg-purple-600 border-purple-500 text-white'
                         : picked
                           ? 'bg-green-600/20 border-green-500/40 text-green-300'
                           : 'bg-slate-700/50 border-white/10 text-slate-400 hover:bg-slate-700'
-                    }`}
+                      }`}
                   >
                     {picked ? <CheckCircle2 size={12} className={isActive ? 'text-white' : 'text-green-400'} /> : <MapPin size={12} />}
                     {drone?.name || id}
@@ -288,7 +475,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
 
             {/* Tóm tắt các điểm đã chọn */}
             <div className="space-y-1">
-              {selectedDroneIds.map(id => {
+              {mergedDroneIds.map(id => {
                 const drone = drones[id];
                 const t = targets[id];
                 return (
@@ -318,7 +505,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
             <div className="p-3 bg-slate-800/50 rounded-xl border border-white/5 space-y-2">
               <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tóm tắt nhiệm vụ</h4>
               <div className="space-y-1">
-                {selectedDroneIds.map(id => {
+                {mergedDroneIds.map(id => {
                   const t = targets[id];
                   return (
                     <div key={id} className="flex items-center justify-between text-[10px]">
@@ -377,11 +564,9 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
 
         {step === 1 && (
           <button
-            onClick={() => { setTargets({}); setActiveDroneForPicking(selectedDroneIds[0] || null); setStep(2); }}
-            disabled={selectedDroneIds.length === 0}
-            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-              selectedDroneIds.length > 0 ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            }`}
+            onClick={handleNextToStep2}
+            disabled={selectedDroneIds.length === 0 && selectedClusterIds.length === 0}
+            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${(selectedDroneIds.length > 0 || selectedClusterIds.length > 0) ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
           >
             Tiếp <ChevronRight size={14} />
           </button>
@@ -390,9 +575,7 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
           <button
             onClick={() => setStep(3)}
             disabled={!allTargetsPicked}
-            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-              allTargetsPicked ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            }`}
+            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${allTargetsPicked ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
           >
             Đặt giờ <ChevronRight size={14} />
           </button>
@@ -401,13 +584,12 @@ const MissionScheduler = ({ drones, onClose, token, mapClickEvent, onGhostPositi
           <button
             onClick={handleSubmit}
             disabled={!executeAt || submitting}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-              submitting
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${submitting
                 ? 'bg-purple-600/50 text-purple-200 cursor-wait'
                 : !executeAt
                   ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                   : 'bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-500 hover:to-pink-400 text-white shadow-lg shadow-purple-900/30'
-            }`}
+              }`}
           >
             {submitting ? (
               <><RotateCcw size={14} className="animate-spin" /> Đang lưu...</>

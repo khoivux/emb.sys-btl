@@ -7,9 +7,9 @@ import math
 from mqtt import MQTTClient
 
 # --- 1. CẤU HÌNH HỆ THỐNG ---
-WIFI_SSID = "QuocKhanh"
-WIFI_PASS = "12345678910"
-MQTT_SERVER = "192.168.20.47" 
+WIFI_SSID = "Khanh"
+WIFI_PASS = "15062002"
+MQTT_SERVER = "192.168.1.5" 
 
 # Tự động lấy ID duy nhất của chip ESP32 (MAC Address)
 raw_id = machine.unique_id()
@@ -80,9 +80,9 @@ def main():
     client.set_last_will(TOPIC_TELEMETRY, lwt_data, retain=True)
     
     try:
-        if client.connect():
-            print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
-            client.subscribe(TOPIC_COMMAND)
+        client.connect()
+        print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
+        client.subscribe(TOPIC_COMMAND)
     except Exception as e:
         print("❌ Lỗi MQTT:", e)
         time.sleep(5)

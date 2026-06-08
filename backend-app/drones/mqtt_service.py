@@ -45,7 +45,9 @@ class MQTTService:
         self._initialized = True
         self._publish_lock = threading.Lock()
 
-        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="django-backend")
+        import uuid
+        client_id = f"django-backend-{uuid.uuid4().hex[:8]}"
+        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._connected = False
@@ -78,8 +80,8 @@ class MQTTService:
         """
         Publish nhiều messages cùng lúc qua cùng 1 connection.
         messages: [{"topic": "...", "payload": "..."}, ...]
-        QoS=0 mặc định: fire-and-forget, không đợi PUBACK → response nhanh nhất.
-        Với persistent connection, messages vẫn được gửi tin cậy qua TCP.
+        QoS=0 mặc định: fire-and-forget, response nhanh nhất.
+        (ESP32 dùng thư viện umqtt.simple chỉ hỗ trợ parse gói tin nhận QoS=0).
         """
         import time as _time
         t0 = _time.time()

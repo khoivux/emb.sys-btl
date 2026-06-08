@@ -54,36 +54,5 @@ services:
       - backend
     restart: always
 
-  drone1:
-    build: ./backend-app
-    environment:
-      - MQTT_HOST=mqtt_broker
-    command: python /tools/mock_drone.py --id drone1
-    volumes:
-      - ./tools:/tools
-    depends_on:
-      - mqtt_broker
-    restart: always
 
-  drone2:
-    build: ./backend-app
-    environment:
-      - MQTT_HOST=mqtt_broker
-    command: python /tools/mock_drone.py --id drone2
-    volumes:
-      - ./tools:/tools
-    depends_on:
-      - mqtt_broker
-    restart: always
-
-  drone3:
-    build: ./backend-app
-    environment:
-      - MQTT_HOST=mqtt_broker
-    command: python /tools/mock_drone.py --id drone3
-    volumes:
-      - ./tools:/tools
-    depends_on:
-      - mqtt_broker
-    restart: always
 
