@@ -108,7 +108,8 @@ def start_config_portal():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('', 80))
-    s.listen(1)
+    s.listen(3)
+    s.settimeout(1.0)  # Non-blocking accept — tránh treo vô thời hạn
     
     while True:
         try:
@@ -163,8 +164,13 @@ def start_config_portal():
             else:
                 conn.send(get_html_page())
                 conn.close()
+        except OSError as e:
+            # errno 116 = ETIMEDOUT: bình thường khi browser probe captive portal
+            # errno 104 = ECONNRESET: client đóng kết nối sớm — bỏ qua
+            if e.args[0] not in (116, 104, 11):  # 11 = EAGAIN (socket timeout)
+                print("Web Server error:", e)
         except Exception as e:
-            print("Web Server loop error:", e)
+            print("Web Server unexpected error:", e)
 
 # --- 5. BẮT ĐẦU LIÊN KẾT KẾT NỐI ---
 def setup_connection():

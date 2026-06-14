@@ -9,7 +9,7 @@ import {
   getTextMinDrones,
 } from '../utils/FormationPatterns.js';
 
-const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, onGhostPositions, onExecute }) => {
+const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, onGhostPositions, onExecute, targetCenter }) => {
   const [step, setStep] = useState(1);
   const [selectedPattern, setSelectedPattern] = useState(null);
   const [patternConfig, setPatternConfig] = useState({});
@@ -66,33 +66,36 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
     if (step !== 3 || !selectedPattern) return [];
 
     // Safely filter drones with valid coordinates first
-    const validDrones = selectedDroneObjects.filter(d => 
+    const validDrones = selectedDroneObjects.filter(d =>
       typeof d.latitude === 'number' && !isNaN(d.latitude) &&
       typeof d.longitude === 'number' && !isNaN(d.longitude)
     );
 
-    const avgLat = validDrones.length > 0 
+    const avgLat = validDrones.length > 0
       ? validDrones.reduce((s, d) => s + d.latitude, 0) / validDrones.length
-      : 20.980812;
+      : 20.9808271;
     const avgLng = validDrones.length > 0
       ? validDrones.reduce((s, d) => s + d.longitude, 0) / validDrones.length
-      : 105.795931;
+      : 105.7874779;
+
+    const centerLat = targetCenter ? targetCenter.lat : avgLat;
+    const centerLng = targetCenter ? targetCenter.lng : avgLng;
 
     switch (selectedPattern) {
       case 'line':
-        return lineFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.direction || 'horizontal', patternConfig.spacing || 10);
+        return lineFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.direction || 'horizontal', patternConfig.spacing || 10);
       case 'circle':
-        return circleFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.radius || 20);
+        return circleFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.radius || 20);
       case 'grid':
-        return gridFormation(selectedDroneObjects, avgLat, avgLng, patternConfig.columns || 3, patternConfig.spacing || 10);
+        return gridFormation(selectedDroneObjects, centerLat, centerLng, patternConfig.columns || 3, patternConfig.spacing || 10);
       case 'text': {
-        const result = textFormation(selectedDroneObjects, patternConfig.text || 'A', avgLat, avgLng, patternConfig.scale || 5);
+        const result = textFormation(selectedDroneObjects, patternConfig.text || 'A', centerLat, centerLng, patternConfig.scale || 5);
         return result.positions;
       }
       default:
         return [];
     }
-  }, [step, selectedPattern, patternConfig, selectedDroneObjects]);
+  }, [step, selectedPattern, patternConfig, selectedDroneObjects, targetCenter]);
 
   // Sơ đồ mô phỏng trực quan các vị trí tương lai
   const visualPreviewSvg = useMemo(() => {
@@ -119,7 +122,7 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
       const y = latSpan === 0
         ? height / 2
         : padding + (1 - (p.targetLat - minLat) / latSpan) * (height - 2 * padding);
-      
+
       // Bản đồ kinh độ Lng tăng về phía Đông -> X tăng trong SVG
       const x = lngSpan === 0
         ? width / 2
@@ -155,7 +158,7 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
           {selectedPattern === 'circle' && points.length > 2 && (() => {
             const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
             const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
-            const rx = Math.max(...points.map(p => Math.sqrt((p.x - cx)**2 + (p.y - cy)**2)));
+            const rx = Math.max(...points.map(p => Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2)));
             return (
               <circle cx={cx} cy={cy} r={rx} fill="none" stroke="rgba(59, 130, 246, 0.3)" strokeWidth="1.5" strokeDasharray="3" />
             );
@@ -271,18 +274,16 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
                     key={drone.device_id}
                     onClick={() => isOnline && onDroneSelect(drone.device_id)}
                     disabled={!isOnline}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                      isChecked
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${isChecked
                         ? 'bg-blue-600/10 border-blue-500/30'
                         : isOnline
                           ? 'bg-slate-800/50 border-white/5 hover:bg-slate-800 hover:border-white/10'
                           : 'bg-slate-800/20 border-white/5 opacity-40 cursor-not-allowed'
-                    }`}
+                      }`}
                   >
                     {/* Checkbox */}
-                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
-                      isChecked ? 'bg-blue-500 border-blue-500' : 'border-slate-600'
-                    }`}>
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isChecked ? 'bg-blue-500 border-blue-500' : 'border-slate-600'
+                      }`}>
                       {isChecked && <CheckCircle2 size={14} className="text-white" />}
                     </div>
 
@@ -330,13 +331,12 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
                       setPatternConfig(getDefaultConfig(pattern.id));
                     }}
                     disabled={disabled}
-                    className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 text-center ${
-                      selected
+                    className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2 text-center ${selected
                         ? 'bg-blue-600/20 border-blue-500 ring-1 ring-blue-500/30'
                         : disabled
                           ? 'bg-slate-800/20 border-white/5 opacity-30 cursor-not-allowed'
                           : 'bg-slate-800/50 border-white/5 hover:bg-slate-800 hover:border-white/10 cursor-pointer'
-                    }`}
+                      }`}
                   >
                     <div className={`text-2xl ${selected ? 'text-blue-400' : 'text-slate-400'}`}>
                       {patternIcons[pattern.id]}
@@ -364,11 +364,10 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
                           <button
                             key={dir}
                             onClick={() => setPatternConfig(c => ({ ...c, direction: dir }))}
-                            className={`flex-1 py-2 text-xs rounded-lg border transition-colors ${
-                              patternConfig.direction === dir
+                            className={`flex-1 py-2 text-xs rounded-lg border transition-colors ${patternConfig.direction === dir
                                 ? 'bg-blue-600/20 border-blue-500 text-blue-400'
                                 : 'bg-slate-700/30 border-white/5 text-slate-400 hover:bg-slate-700/50'
-                            }`}
+                              }`}
                           >
                             {dir === 'horizontal' ? 'Ngang' : 'Dọc'}
                           </button>
@@ -513,11 +512,18 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
                     <span className="text-white">{patternConfig.scale}m/px</span>
                   </>
                 )}
-            </div>
+              </div>
             </div>
 
             {/* Sơ đồ mô phỏng trực quan */}
             {visualPreviewSvg}
+
+            <div className="bg-blue-600/20 border border-blue-500/30 rounded-xl p-3 flex items-start gap-2 text-left mb-2">
+              <span className="text-blue-400 mt-0.5">ℹ️</span>
+              <p className="text-[10px] text-blue-200 m-0 leading-tight">
+                Bạn có thể <strong>click trên bản đồ</strong> để chọn vị trí trung tâm mới cho đội hình.
+              </p>
+            </div>
 
             {/* Danh sách vị trí đích */}
             <div className="space-y-1">
@@ -560,11 +566,10 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
           <button
             onClick={() => setStep(2)}
             disabled={!canGoStep2}
-            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-              canGoStep2
+            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${canGoStep2
                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            }`}
+              }`}
           >
             Tiếp <ChevronRight size={14} />
           </button>
@@ -573,11 +578,10 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
           <button
             onClick={() => setStep(3)}
             disabled={!canGoStep3}
-            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-              canGoStep3
+            className={`flex items-center gap-1 px-4 py-2 rounded-xl text-xs font-bold transition-all ${canGoStep3
                 ? 'bg-blue-600 hover:bg-blue-500 text-white'
                 : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            }`}
+              }`}
           >
             Xem trước <ChevronRight size={14} />
           </button>
@@ -586,11 +590,10 @@ const FormationScheduler = ({ drones, selectedDrones, onDroneSelect, onCancel, o
           <button
             onClick={handleExecute}
             disabled={executing || computedPositions.length === 0}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-              executing
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${executing
                 ? 'bg-yellow-600/50 text-yellow-200 cursor-wait'
                 : 'bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-500 hover:to-emerald-400 text-white shadow-lg shadow-green-900/30'
-            }`}
+              }`}
           >
             {executing ? (
               <>

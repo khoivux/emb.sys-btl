@@ -45,7 +45,9 @@ class MQTTService:
         self._initialized = True
         self._publish_lock = threading.Lock()
 
-        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="django-backend")
+        import uuid
+        client_id = f"django-backend-{uuid.uuid4().hex[:8]}"
+        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=client_id)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._connected = False
@@ -74,25 +76,20 @@ class MQTTService:
             result = self._client.publish(topic, payload, qos=qos)
             result.wait_for_publish(timeout=5)
 
-    def publish_batch(self, messages: list[dict], qos: int = 1):
+    def publish_batch(self, messages: list[dict], qos: int = 0):
         """
         Publish nhiều messages cùng lúc qua cùng 1 connection.
         messages: [{"topic": "...", "payload": "..."}, ...]
+        QoS=0 mặc định: fire-and-forget, response nhanh nhất.
+        (ESP32 dùng thư viện umqtt.simple chỉ hỗ trợ parse gói tin nhận QoS=0).
         """
         import time as _time
         t0 = _time.time()
         with self._publish_lock:
-            results = []
             for msg in messages:
-                result = self._client.publish(msg["topic"], msg["payload"], qos=qos)
-                results.append(result)
+                self._client.publish(msg["topic"], msg["payload"], qos=qos)
             t_pub = _time.time()
-            logger.info(f"[MQTT] publish {len(messages)} msgs: {(t_pub - t0)*1000:.1f}ms")
-            # Đợi tất cả gửi xong
-            for result in results:
-                result.wait_for_publish(timeout=5)
-            t_wait = _time.time()
-            logger.info(f"[MQTT] wait_for_publish: {(t_wait - t_pub)*1000:.1f}ms | Tổng batch: {(t_wait - t0)*1000:.1f}ms")
+            logger.info(f"[MQTT] publish_batch {len(messages)} msgs: {(t_pub - t0)*1000:.1f}ms (fire-and-forget, QoS={qos})")
 
     @property
     def is_connected(self):

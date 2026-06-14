@@ -16,7 +16,7 @@ TOPIC_TELEMETRY = "drone/telemetry"
 # --- AUTO-GEOLOCATION ---
 def get_current_location():
     # Return PTIT Hanoi immediately to avoid HTTP/DNS timeouts and 429 errors
-    return 20.980812, 105.795931
+    return 20.9808271, 105.7874779
 
 # --- INITIAL DRONE STATE ---
 state = "IDLE"  # IDLE, TAKEOFF, FLYING, LANDING, RTH

@@ -18,23 +18,39 @@ TOPIC_COMMAND = b"drone/" + CLIENT_ID.encode() + b"/command"
 
 # --- 2. TRẠNG THÁI DRONE ---
 state = "IDLE"
-lat, lng, alt = 20.980812, 105.795931, 0.0
+lat, lng, alt = 20.9808271, 105.7874779, 0.0
 target_lat, target_lng = lat, lng
 battery = 95.0
+yaw = 0  # Góc hướng đầu (heading) của drone
+
+# Bộ cộng dồn tọa độ (Accumulator) để khắc phục lỗi phần cứng float 32-bit
+lat_offset = 0.0
+lng_offset = 0.0
+
+# Biến vận tốc & thời gian để điều khiển giữ phím mượt mà
+vx, vy, vz, v_yaw = 0.0, 0.0, 0.0, 0.0
+last_vx_update = 0
+last_vy_update = 0
+last_vz_update = 0
+last_vyaw_update = 0
 
 # --- 3. KẾT NỐI WIFI ---
 # WiFi đã được kết nối tự động trong file boot.py
 
 # --- 4. XỬ LÝ LỆNH TỪ WEB ---
 def on_message(topic, msg):
-    global state, target_lat, target_lng
+    global state, target_lat, target_lng, lat, lng, alt, yaw
+    global vx, vy, vz, v_yaw, last_vx_update, last_vy_update, last_vz_update, last_vyaw_update
+    global lat_offset, lng_offset
     try:
         data = json.loads(msg)
         # Sửa: Backend gửi key "type" thay vì "command"
         cmd = data.get("type") 
         params = data.get("params", {}) # Lấy các tham số đi kèm (như tọa độ GOTO)
         
-        print("Lệnh mới nhận được:", cmd)
+        # Chỉ print những lệnh cấu hình/quan trọng để tránh tràn console
+        if cmd in ("TAKEOFF", "LAND", "GOTO", "EMERGENCY"):
+            print("Lệnh hệ thống nhận được:", cmd)
         
         if cmd == "TAKEOFF": 
             state = "TAKEOFF"
@@ -49,6 +65,53 @@ def on_message(topic, msg):
         elif cmd == "EMERGENCY": 
             state = "IDLE"
             machine.reset()
+        elif cmd == "MOVE":
+            # Chỉ cho phép di chuyển thủ công khi drone đang bay (alt > 2m)
+            if alt > 2.0:
+                state = "HOVER"  # Hủy di chuyển tự động GOTO
+                direction = params.get("direction")
+                now = time.ticks_ms()
+                
+                # Cập nhật vận tốc mục tiêu: trả lại tốc độ chậm 3m/s (đã có accumulator lo phần float)
+                step = 0.000003  # Tương đương ~0.3 mét mỗi 100ms (~3 m/s)
+                if direction == "FORWARD":
+                    vx = step
+                    last_vx_update = now
+                elif direction == "BACKWARD":
+                    vx = -step
+                    last_vx_update = now
+                elif direction == "LEFT":
+                    vy = -step
+                    last_vy_update = now
+                elif direction == "RIGHT":
+                    vy = step
+                    last_vy_update = now
+        elif cmd == "CLIMB":
+            if alt > 2.0:
+                vz = 0.1  # Tốc độ bay lên: 1.0 m/s
+                last_vz_update = time.ticks_ms()
+        elif cmd == "DESCEND":
+            if alt > 2.0:
+                vz = -0.1  # Tốc độ hạ xuống: 1.0 m/s
+                last_vz_update = time.ticks_ms()
+        elif cmd == "YAW_LEFT":
+            if alt > 2.0:
+                v_yaw = -4.0  # Tốc độ xoay trái: 40°/giây
+                last_vyaw_update = time.ticks_ms()
+        elif cmd == "YAW_RIGHT":
+            if alt > 2.0:
+                v_yaw = 4.0   # Tốc độ xoay phải: 40°/giây
+                last_vyaw_update = time.ticks_ms()
+        elif cmd == "SET_POSITION":
+            new_lat = params.get("lat")
+            new_lng = params.get("lng")
+            if new_lat is not None and new_lng is not None:
+                lat = float(new_lat)
+                lng = float(new_lng)
+                target_lat, target_lng = lat, lng
+                lat_offset = 0.0
+                lng_offset = 0.0
+                print(f"📍 Đã cập nhật vị trí xuất phát từ Web: {lat}, {lng}")
     except Exception as e: 
         print("Lỗi giải mã lệnh:", e)
 
@@ -63,59 +126,152 @@ def main():
     client.set_last_will(TOPIC_TELEMETRY, lwt_data, retain=True)
     
     try:
-        if client.connect():
-            print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
-            client.subscribe(TOPIC_COMMAND)
+        client.connect()
+        print(f"✅ ĐÃ KẾT NỐI! Đang lắng nghe lệnh tại: {TOPIC_COMMAND.decode()}")
+        client.subscribe(TOPIC_COMMAND)
+        
+        # Đăng ký poller để đọc cạn kiệt socket buffer (tránh trễ tích lũy)
+        import uselect
+        poller = uselect.poll()
+        poller.register(client.sock, uselect.POLLIN)
     except Exception as e:
         print("❌ Lỗi MQTT:", e)
         time.sleep(5)
         machine.reset()
 
-    last_send = 0
+    # Khởi tạo mốc thời gian ban đầu cho các watchdog
+    t_now = time.ticks_ms()
+    global last_vx_update, last_vy_update, last_vz_update, last_vyaw_update
+    last_vx_update = t_now
+    last_vy_update = t_now
+    last_vz_update = t_now
+    last_vyaw_update = t_now
+
+    last_send = time.ticks_ms()
     while True:
         try:
-            client.check_msg()
+            # Đọc sạch toàn bộ các gói tin MQTT đang chờ trong socket buffer
+            while poller.poll(0):
+                client.check_msg()
             
             # --- LOGIC GIẢ LẬP VẬT LÝ ---
-            global alt, lat, lng, state
+            global alt, lat, lng, state, yaw, vx, vy, vz, v_yaw, lat_offset, lng_offset
             
-            # 1. Xử lý Độ cao
-            if state == "TAKEOFF" and alt < 10: 
-                alt += 0.2
-            elif state == "LANDING" and alt > 0: 
-                alt -= 0.2
-                if alt <= 0: state = "IDLE"
+            # Watchdog kiểm tra nút bấm: Nếu trong vòng 150ms không có lệnh mới gửi tới, hãm phanh về 0
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_vx_update) > 150:
+                vx = 0.0
+            if time.ticks_diff(now, last_vy_update) > 150:
+                vy = 0.0
+            if time.ticks_diff(now, last_vz_update) > 150:
+                vz = 0.0
+            if time.ticks_diff(now, last_vyaw_update) > 150:
+                v_yaw = 0.0
 
-            # 2. Xử lý Di chuyển
-            if state == "MOVING" and alt > 2:
-                step = 0.0001
-                if abs(lat - target_lat) > step:
-                    lat += step if target_lat > lat else -step
-                if abs(lng - target_lng) > step:
-                    lng += step if target_lng > lng else -step
-                
-                if abs(lat - target_lat) < step and abs(lng - target_lng) < step:
-                    print("🎯 Đã tới đích!")
-                    state = "HOVER"
+            # 1. Xử lý Độ cao (Giả lập thực tế - Giới hạn tuyệt đối để tránh sai lệch số thực)
+            if state == "TAKEOFF":
+                alt += 0.2  # Tốc độ cất cánh: 2.0 m/s
+                if alt >= 10.0:
+                    alt = 10.0
+                    state = "HOVER"  # Tự động sang HOVER khi đạt độ cao 10m
+            elif state == "LANDING":
+                if alt > 0:
+                    if alt < 1.5:
+                        alt -= 0.05  # Tốc độ tiếp đất (sát mặt đất < 1.5m): 0.5 m/s
+                    else:
+                        alt -= 0.15  # Tốc độ hạ cánh bình thường: 1.5 m/s
+                    
+                    if alt <= 0: 
+                        alt = 0.0
+                        state = "IDLE"
+            
+            # Cộng dồn thay đổi độ cao thủ công (CLIMB/DESCEND)
+            if state in ("HOVER", "MOVING") and vz != 0.0:
+                alt = max(1.0, min(alt + vz, 100.0))
 
-            # 3. Gửi dữ liệu Telemetry (Sửa lại tên các field cho khớp với Backend)
-            if (time.time() - last_send) > 2:
+            # 2. Xử lý Di chuyển tự động (GOTO)
+            if state == "MOVING":
+                if alt <= 2.0:
+                    alt += 0.2  # Tự động cất cánh an toàn trước khi bay ngang
+                else:
+                    import math
+                    v_lat = lat + lat_offset
+                    v_lng = lng + lng_offset
+                    dist_lat = target_lat - v_lat
+                    dist_lng = target_lng - v_lng
+                    dist = math.sqrt(dist_lat**2 + dist_lng**2)
+                    
+                    if dist > 0.000005:  # Ngưỡng an toàn để dừng (khoảng 0.5m)
+                        # Vận tốc tự động: Bay nhanh khi xa, chậm lại khi gần
+                        raw_speed = min(0.00005, max(0.000015, dist * 0.2))
+                        # Chống bay lố (Anti-overshoot)
+                        current_speed = min(dist, raw_speed)
+                        
+                        lat_offset += (dist_lat / dist) * current_speed
+                        lng_offset += (dist_lng / dist) * current_speed
+                        
+                        if abs(lat_offset) >= 0.00005:
+                            lat += lat_offset
+                            lat_offset = 0.0
+                        if abs(lng_offset) >= 0.00005:
+                            lng += lng_offset
+                            lng_offset = 0.0
+                    else:
+                        print("🎯 Đã tới đích!")
+                        lat = target_lat
+                        lng = target_lng
+                        lat_offset = 0.0
+                        lng_offset = 0.0
+                        state = "HOVER"
+
+            # Cộng dồn di chuyển thủ công dựa trên vận tốc vx, vy
+            if alt > 2.0:
+                if vx != 0.0 or vy != 0.0:
+                    import math
+                    yaw_rad = math.radians(yaw)
+                    
+                    # Chuyển đổi vận tốc tương đối (vx: tiến/lùi, vy: phải/trái) 
+                    # sang vận tốc tuyệt đối trên bản đồ (lat, lng) dựa theo góc yaw
+                    real_lat_step = vx * math.cos(yaw_rad) - vy * math.sin(yaw_rad)
+                    real_lng_step = vx * math.sin(yaw_rad) + vy * math.cos(yaw_rad)
+
+                    # Cộng dồn vận tốc vào bộ đệm tạm thời (accumulator)
+                    lat_offset += real_lat_step
+                    lng_offset += real_lng_step
+                    
+                    if abs(lat_offset) >= 0.00005:
+                        lat += lat_offset
+                        lat_offset = 0.0
+                    if abs(lng_offset) >= 0.00005:
+                        lng += lng_offset
+                        lng_offset = 0.0
+                        
+                # Cộng dồn góc quay đầu (Yaw)
+                if v_yaw != 0.0:
+                    yaw = (yaw + v_yaw) % 360
+
+            # 3. Gửi dữ liệu Telemetry (Gửi sau mỗi 200ms để hiển thị mượt mà trên web)
+            now = time.ticks_ms()
+            if time.ticks_diff(now, last_send) >= 200:
                 telemetry = {
                     "device_id": CLIENT_ID,
                     "state": state,
-                    "latitude": lat, 
-                    "longitude": lng, 
+                    "latitude": lat + lat_offset, 
+                    "longitude": lng + lng_offset, 
                     "altitude": round(alt, 2),
+                    "yaw": yaw,
                     "battery": battery, 
                 }
                 client.publish(TOPIC_TELEMETRY, json.dumps(telemetry))
-                print(f"📡 [{state}] Lat: {lat:.5f}, Lng: {lng:.5f}, Alt: {alt:.1f}m")
-                last_send = time.time()
+                print(f"📡 [{state}] Lat: {lat:.5f}, Lng: {lng:.5f}, Alt: {alt:.1f}m | Yaw={yaw}°")
+                last_send = now
                 
             time.sleep(0.1)
         except Exception as e:
-            print("Lỗi vòng lặp:", e)
+            print("Lỗi vòng lặp (Mất kết nối MQTT/WiFi):", e)
+            print("Khởi động lại ESP32 để kết nối lại...")
             time.sleep(2)
+            machine.reset()
 
 if __name__ == "__main__":
     main()
